@@ -52,11 +52,13 @@ jobs:
         shell: pwsh
         run: |
           $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          $version = if ($env:GITHUB_REF -like "refs/tags/v*") { $env:GITHUB_REF -replace "^refs/tags/v", "" } else { "0.0.0-dev" }
+          Write-Host "Version del instalador: $version"
           if ($env:INSTALLER_PASSWORD) {
-            & $iscc "/DInstallerPassword=$env:INSTALLER_PASSWORD" installer\RudolphTech.iss
+            & $iscc "/DAppVersion=$version" "/DInstallerPassword=$env:INSTALLER_PASSWORD" installer\RudolphTech.iss
           } else {
             Write-Host "Sin INSTALLER_PASSWORD: el instalador queda sin contrasena."
-            & $iscc installer\RudolphTech.iss
+            & $iscc "/DAppVersion=$version" installer\RudolphTech.iss
           }
           if ($LASTEXITCODE -ne 0) { throw "ISCC devolvio $LASTEXITCODE" }
 

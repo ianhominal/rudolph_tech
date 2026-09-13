@@ -12,7 +12,11 @@
 ; and the ingest token are asked for and downloaded on first run.
 
 #define AppName "Rudolph Tech"
-#define AppVersion "0.1.0"
+; The version comes from the git tag through the CI (/DAppVersion=x.y.z). Building locally without
+; that define falls back to 0.0.0-dev, which makes an untagged local build obvious in its file name.
+#ifndef AppVersion
+  #define AppVersion "0.0.0-dev"
+#endif
 #define AppPublisher "Rudolph Electronics"
 #define AppExeName "RudolphTech.exe"
 #define PublishDir "..\src\RudolphTech\bin\Release\net10.0-windows\win-x64\publish"
