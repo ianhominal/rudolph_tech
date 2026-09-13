@@ -1,0 +1,147 @@
+using RudolphTech.Core.Settings;
+
+namespace RudolphTech.Core.Tests;
+
+/// <summary> settings.json under %LocalAppData%\RudolphTech, with the ingest token protected at rest. </summary>
+public class SettingsStoreTests : IDisposable
+{
+    private readonly string _folder = Path.Combine(Path.GetTempPath(), "rudolph-tech-tests", Guid.NewGuid().ToString("n"));
+    private readonly FakeSecretProtector _protector = new();
+
+    private SettingsStore NewStore() => new(Path.Combine(_folder, "settings.json"), _protector);
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_folder)) Directory.Delete(_folder, recursive: true);
+        GC.SuppressFinalize(this);
+    }
+
+    /// <summary> Stands in for DPAPI in the tests: reversible, and never the plain text itself. </summary>
+    private sealed class FakeSecretProtector : ISecretProtector
+    {
+        private const string Prefix = "protegido:";
+
+        public string Protect(string value) => Prefix + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(value));
+
+        public string? Unprotect(string value)
+        {
+            if (!value.StartsWith(Prefix, StringComparison.Ordinal)) return null;
+            try
+            {
+                return System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(value[Prefix.Length..]));
+            }
+            catch (FormatException)
+            {
+                return null;
+            }
+        }
+    }
+
+    [Fact]
+    public void TheDefaultsMatchWhatTheOldScheduledTasksDid()
+    {
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://rudolph-mvp.vercel.app", settings.AppUrl);
+        Assert.Equal(15, settings.PendingIntervalMinutes);
+        Assert.Equal(new TimeOnly(6, 45), settings.DailyTime);
+        Assert.False(settings.Paused);
+        Assert.False(settings.ChromeOffScreen);
+        Assert.Null(settings.IngestToken);
+    }
+
+    [Fact]
+    public void SavesAndReadsBackEveryField()
+    {
+        var store = NewStore();
+        var settings = store.Load();
+        settings.AppUrl = "https://otra.test";
+        settings.PendingIntervalMinutes = 30;
+        settings.DailyTime = new TimeOnly(7, 15);
+        settings.ChromeOffScreen = true;
+        settings.StartWithWindows = true;
+        settings.Paused = true;
+        settings.IngestToken = "un-token";
+        settings.LastPackageDownload = new DateTimeOffset(2026, 9, 13, 6, 45, 0, TimeSpan.Zero);
+        settings.LastDailyRun = new DateOnly(2026, 9, 13);
+        settings.LastPendingRun = new DateTimeOffset(2026, 9, 13, 9, 0, 0, TimeSpan.Zero);
+        store.Save(settings);
+
+        var reloaded = NewStore().Load();
+
+        Assert.Equal("https://otra.test", reloaded.AppUrl);
+        Assert.Equal(30, reloaded.PendingIntervalMinutes);
+        Assert.Equal(new TimeOnly(7, 15), reloaded.DailyTime);
+        Assert.True(reloaded.ChromeOffScreen);
+        Assert.True(reloaded.StartWithWindows);
+        Assert.True(reloaded.Paused);
+        Assert.Equal("un-token", reloaded.IngestToken);
+        Assert.Equal(new DateOnly(2026, 9, 13), reloaded.LastDailyRun);
+        Assert.NotNull(reloaded.LastPackageDownload);
+        Assert.NotNull(reloaded.LastPendingRun);
+    }
+
+    [Fact]
+    public void TheTokenIsNeverWrittenInPlainText()
+    {
+        var store = NewStore();
+        var settings = store.Load();
+        settings.IngestToken = "muy-secreto";
+        store.Save(settings);
+
+        var raw = File.ReadAllText(Path.Combine(_folder, "settings.json"));
+
+        Assert.DoesNotContain("muy-secreto", raw);
+        Assert.Contains("protegido:", raw);
+    }
+
+    [Fact]
+    public void ATokenThatCannotBeUnprotectedIsDropped()
+    {
+        // What happens when settings.json is copied to another Windows user or another machine.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test", "protectedIngestToken": "basura-de-otra-maquina" }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Null(settings.IngestToken);
+        Assert.Equal("https://x.test", settings.AppUrl);
+    }
+
+    [Fact]
+    public void ABrokenFileFallsBackToTheDefaultsInsteadOfCrashing()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(Path.Combine(_folder, "settings.json"), "{ esto no es json");
+
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://rudolph-mvp.vercel.app", settings.AppUrl);
+    }
+
+    [Fact]
+    public void OutOfRangeValuesAreBroughtBackIntoRange()
+    {
+        var store = NewStore();
+        var settings = store.Load();
+        settings.PendingIntervalMinutes = 0;
+        store.Save(settings);
+
+        Assert.Equal(AppSettings.DefaultPendingIntervalMinutes, NewStore().Load().PendingIntervalMinutes);
+    }
+
+    [Fact]
+    public void TheAppIsOnlyConfiguredOnceItHasAUrlAndAToken()
+    {
+        var settings = new AppSettings();
+        Assert.False(settings.IsConfigured);
+
+        settings.IngestToken = "t";
+        Assert.True(settings.IsConfigured);
+
+        settings.AppUrl = "   ";
+        Assert.False(settings.IsConfigured);
+    }
+}

@@ -1,0 +1,75 @@
+name: build
+
+# Builds and tests the app, packs the installer, and publishes it on a tag.
+# The installer password comes from the INSTALLER_PASSWORD repository secret and is passed to Inno
+# Setup as a define; it never appears in the repository or in a log.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Traer el repositorio
+        uses: actions/checkout@v4
+
+      - name: Preparar el SDK de .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restaurar
+        run: dotnet restore
+
+      - name: Compilar
+        run: dotnet build --configuration Release --no-restore
+
+      - name: Correr los tests
+        run: dotnet test tests/RudolphTech.Core.Tests/RudolphTech.Core.Tests.csproj --configuration Release --no-build --verbosity normal
+
+      - name: Publicar la aplicación
+        run: dotnet publish src/RudolphTech/RudolphTech.csproj --configuration Release --runtime win-x64 --self-contained true -p:PublishSingleFile=false --output src/RudolphTech/bin/Release/net10.0-windows/win-x64/publish
+
+      - name: Traer el Node portable
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tools/get-node.ps1
+
+      - name: Instalar Inno Setup
+        run: choco install innosetup --no-progress --yes
+
+      - name: Compilar el instalador
+        env:
+          INSTALLER_PASSWORD: ${{ secrets.INSTALLER_PASSWORD }}
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if ($env:INSTALLER_PASSWORD) {
+            & $iscc "/DInstallerPassword=$env:INSTALLER_PASSWORD" installer\RudolphTech.iss
+          } else {
+            Write-Host "Sin INSTALLER_PASSWORD: el instalador queda sin contrasena."
+            & $iscc installer\RudolphTech.iss
+          }
+          if ($LASTEXITCODE -ne 0) { throw "ISCC devolvio $LASTEXITCODE" }
+
+      - name: Guardar el instalador como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: RudolphTech-setup
+          path: build/installer/*.exe
+          if-no-files-found: error
+
+      - name: Publicar la version
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/installer/*.exe
+          generate_release_notes: true

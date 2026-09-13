@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/RudolphTech.Core/RudolphTech.Core.csproj" />
+    <Project Path="src/RudolphTech/RudolphTech.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/RudolphTech.Core.Tests/RudolphTech.Core.Tests.csproj" />
+  </Folder>
+</Solution>
