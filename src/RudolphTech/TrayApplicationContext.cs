@@ -3,6 +3,7 @@ using RudolphTech.Core.Logging;
 using RudolphTech.Core.Scheduling;
 using RudolphTech.Core.Settings;
 using RudolphTech.Core.Survey;
+using RudolphTech.Core.Web;
 using RudolphTech.Services;
 
 namespace RudolphTech;
@@ -49,6 +50,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         _runItem = new ToolStripMenuItem("Relevar ahora", null, (_, _) => StartManualRun());
 
         var menu = new ContextMenuStrip();
+        menu.Items.Add(new ToolStripMenuItem("Abrir Rudolph en el navegador", null, (_, _) => OpenInBrowser()));
+        menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Abrir configuración", null, (_, _) => OpenSettings()));
         menu.Items.Add(_runItem);
         menu.Items.Add(_pauseItem);
@@ -245,6 +248,25 @@ public sealed class TrayApplicationContext : ApplicationContext
             "Rudolph Tech",
             _settings.Paused ? "No va a arrancar ningún relevamiento automático." : StatusText.Schedule(_settings, paused: false),
             ToolTipIcon.Info);
+    }
+
+    private void OpenInBrowser()
+    {
+        var (url, error) = BrowserLink.Resolve(_settings.AppUrl);
+        if (error is not null)
+        {
+            _tray.ShowBalloonTip(6000, "Rudolph Tech", error, ToolTipIcon.Warning);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(url!) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            _log.Write($"No se pudo abrir el navegador: {exception.Message}");
+        }
     }
 
     private void OpenLogFolder()

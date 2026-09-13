@@ -16,7 +16,8 @@ public sealed class SettingsForm : Form
     private readonly AgentService _agent;
     private readonly AppSettings _settings;
 
-    private readonly TextBox _url = new() { Width = 330 };
+    private readonly TextBox _url = new() { Width = 220 };
+    private readonly Button _openBrowser = new() { Text = "Abrir Rudolph en el navegador", AutoSize = true };
     private readonly TextBox _password = new() { Width = 200, UseSystemPasswordChar = true };
     private readonly Button _login = new() { Text = "Iniciar sesión", Width = 120 };
     private readonly Label _session = new() { AutoSize = false, Width = 460, Height = 20, ForeColor = SystemColors.GrayText };
@@ -62,6 +63,7 @@ public sealed class SettingsForm : Form
         RefreshStatus();
 
         _login.Click += OnLogin;
+        _openBrowser.Click += (_, _) => OnOpenBrowser();
         _update.Click += OnUpdateAgent;
         _runNow.Click += OnRunNow;
         _logs.LinkClicked += (_, _) => OpenLogFolder();
@@ -84,6 +86,7 @@ public sealed class SettingsForm : Form
 
         var addressTitle = Section("Dirección de la aplicación");
         _url.Location = new Point(16, top);
+        _openBrowser.Location = new Point(246, top - 2);
         top += 30;
         _password.Location = new Point(16, top);
         _login.Location = new Point(226, top - 1);
@@ -122,7 +125,7 @@ public sealed class SettingsForm : Form
 
         Controls.AddRange(
         [
-            addressTitle, _url, _password, _login, _session, _package,
+            addressTitle, _url, _openBrowser, _password, _login, _session, _package,
             scheduleTitle, intervalLabel, _interval, minutesLabel, dailyLabel, _daily, _chrome, _autostart,
             actionsTitle, _runNow, _update,
             lastRunTitle, _lastRun, _logs, _status, _close,
@@ -199,6 +202,25 @@ public sealed class SettingsForm : Form
         {
             Busy(false);
             RefreshStatus();
+        }
+    }
+
+    private void OnOpenBrowser()
+    {
+        var (url, error) = BrowserLink.Resolve(_url.Text);
+        if (error is not null)
+        {
+            Say(error);
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo(url!) { UseShellExecute = true });
+        }
+        catch (Exception exception)
+        {
+            Say($"No se pudo abrir el navegador: {exception.Message}");
         }
     }
 
