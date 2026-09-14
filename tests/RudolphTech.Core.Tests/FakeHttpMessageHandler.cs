@@ -32,6 +32,16 @@ public sealed class FakeHttpMessageHandler : HttpMessageHandler
         return response;
     }
 
+    /// <summary> The 403 the trial gate answers every request with once the access period is over (web/src/proxy.ts). </summary>
+    public static HttpResponseMessage Expired(string expiredOn = "2026-10-15") =>
+        new(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent(
+                $$"""{"error":"El acceso a Rudolph estuvo disponible hasta el 15/10/2026.","expired":true,"expiredOn":"{{expiredOn}}"}""",
+                System.Text.Encoding.UTF8,
+                "application/json"),
+        };
+
     /// <summary> The 303 back to /ingresar?error=1 the route answers with for a wrong password. </summary>
     public static HttpResponseMessage LoginRejected()
     {

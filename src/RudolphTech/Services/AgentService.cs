@@ -84,7 +84,9 @@ public sealed class AgentService : IDisposable
         var download = await _client.DownloadPackageAsync(Settings.AppUrl, _sessionCookie, cancellation);
         if (!download.Success)
         {
-            if (download.Error.Contains("sesión", StringComparison.OrdinalIgnoreCase)) _sessionCookie = null;
+            // An expired access is not a session problem: the cookie is still good and throwing it
+            // away would only make the next attempt ask for the password for nothing.
+            if (!download.Expired && download.Error.Contains("sesión", StringComparison.OrdinalIgnoreCase)) _sessionCookie = null;
             _log.Write($"No se pudo descargar el agente: {download.Error}");
             return (false, download.Error);
         }

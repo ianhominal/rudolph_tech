@@ -54,6 +54,51 @@ public class RudolphClientTests
     }
 
     [Fact]
+    public async Task AnExpiredAccessIsReportedInItsOwnWordsWhenLoggingIn()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => FakeHttpMessageHandler.Expired());
+        var client = new RudolphClient(new HttpClient(handler));
+
+        var result = await client.LoginAsync("https://x.test", "secreta", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.True(result.Expired);
+        Assert.False(result.Offline);
+        // The app's own sentence, not a status code and not "the password is wrong".
+        Assert.Contains("15/10/2026", result.Error);
+        Assert.DoesNotContain("contraseña", result.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task AnExpiredAccessIsReportedInItsOwnWordsWhenDownloadingTheAgent()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => FakeHttpMessageHandler.Expired());
+        var client = new RudolphClient(new HttpClient(handler));
+
+        var result = await client.DownloadPackageAsync("https://x.test", "rudolph_session=t", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.True(result.Expired);
+        Assert.Contains("15/10/2026", result.Error);
+        Assert.DoesNotContain("sesión venció", result.Error);
+    }
+
+    [Fact]
+    public async Task APlainForbiddenWithoutTheExpiredFlagIsNotTreatedAsAnExpiredAccess()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => new HttpResponseMessage(HttpStatusCode.Forbidden)
+        {
+            Content = new StringContent("""{"error":"No autorizado"}""", Encoding.UTF8, "application/json"),
+        });
+        var client = new RudolphClient(new HttpClient(handler));
+
+        var result = await client.DownloadPackageAsync("https://x.test", "rudolph_session=t", CancellationToken.None);
+
+        Assert.False(result.Success);
+        Assert.False(result.Expired);
+    }
+
+    [Fact]
     public async Task ADeploymentWithoutASessionSecretIsReportedSeparately()
     {
         var handler = new FakeHttpMessageHandler((_, _) =>

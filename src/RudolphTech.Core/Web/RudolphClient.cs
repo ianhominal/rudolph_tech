@@ -14,6 +14,9 @@ public sealed class LoginResult
 
     /// <summary> The app could not be reached at all, as opposed to answering that the password is wrong. </summary>
     public bool Offline { get; init; }
+
+    /// <summary> The app refused because its access period is over, not because anything here is wrong. </summary>
+    public bool Expired { get; init; }
 }
 
 public sealed class DownloadResult
@@ -22,6 +25,9 @@ public sealed class DownloadResult
     public byte[] Content { get; init; } = [];
     public string Error { get; init; } = "";
     public bool Offline { get; init; }
+
+    /// <summary> The app refused because its access period is over, not because anything here is wrong. </summary>
+    public bool Expired { get; init; }
 }
 
 /// <summary>
@@ -71,6 +77,12 @@ public sealed class RudolphClient
 
         using (response)
         {
+            var expired = await ReadExpiredAsync(response, cancellation);
+            if (expired is not null)
+            {
+                return new LoginResult { Error = expired, Expired = true };
+            }
+
             if (!IsRedirect(response.StatusCode))
             {
                 return new LoginResult { Error = $"La aplicación respondió {(int)response.StatusCode} al iniciar sesión." };
@@ -114,6 +126,12 @@ public sealed class RudolphClient
 
         using (response)
         {
+            var expired = await ReadExpiredAsync(response, cancellation);
+            if (expired is not null)
+            {
+                return new DownloadResult { Error = expired, Expired = true };
+            }
+
             if (IsRedirect(response.StatusCode))
             {
                 return new DownloadResult { Error = "La sesión venció. Iniciá sesión de nuevo." };
@@ -138,6 +156,41 @@ public sealed class RudolphClient
             }
 
             return new DownloadResult { Success = true, Content = content };
+        }
+    }
+
+    /// <summary>
+    /// The trial gate's answer, or null when this response is not that.
+    ///
+    /// The web app refuses every request with 403 and { "error": "...", "expired": true }
+    /// once its access period is over (web/src/proxy.ts). That is a different situation from a
+    /// wrong password or a broken install — nothing here is misconfigured and retrying will not
+    /// help — so every caller reports it in its own words instead of as a status code.
+    /// </summary>
+    private static async Task<string?> ReadExpiredAsync(HttpResponseMessage response, CancellationToken cancellation)
+    {
+        if (response.StatusCode != HttpStatusCode.Forbidden) return null;
+
+        var body = await SafeReadAsync(response, cancellation);
+        if (!IsExpiredBody(body)) return null;
+
+        return ReadJsonError(body) ?? "El acceso a Rudolph venció. Avisá a quien administra la aplicación.";
+    }
+
+    /// <summary> Pure: whether a JSON body carries the gate's expired:true flag. </summary>
+    internal static bool IsExpiredBody(string body)
+    {
+        if (string.IsNullOrWhiteSpace(body)) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(body);
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.TryGetProperty("expired", out var expired)
+                && expired.ValueKind == JsonValueKind.True;
+        }
+        catch (JsonException)
+        {
+            return false;
         }
     }
 
