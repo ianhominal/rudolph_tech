@@ -37,6 +37,8 @@ public sealed class SettingsStore
         public bool ChromeOffScreen { get; set; }
         public bool StartWithWindows { get; set; }
         public bool Paused { get; set; }
+        public bool? DailyEnabled { get; set; }
+        public bool? PendingEnabled { get; set; }
         public string? ProtectedIngestToken { get; set; }
         public string? PackageAppUrl { get; set; }
         public DateTimeOffset? LastPackageDownload { get; set; }
@@ -70,6 +72,8 @@ public sealed class SettingsStore
         settings.ChromeOffScreen = persisted.ChromeOffScreen;
         settings.StartWithWindows = persisted.StartWithWindows;
         settings.Paused = persisted.Paused;
+        settings.DailyEnabled = persisted.DailyEnabled ?? true;
+        settings.PendingEnabled = persisted.PendingEnabled ?? true;
         settings.PackageAppUrl = persisted.PackageAppUrl;
         settings.LastPackageDownload = persisted.LastPackageDownload;
         settings.LastPendingRun = persisted.LastPendingRun;
@@ -93,6 +97,8 @@ public sealed class SettingsStore
             ChromeOffScreen = settings.ChromeOffScreen,
             StartWithWindows = settings.StartWithWindows,
             Paused = settings.Paused,
+            DailyEnabled = settings.DailyEnabled,
+            PendingEnabled = settings.PendingEnabled,
             ProtectedIngestToken = string.IsNullOrEmpty(settings.IngestToken) ? null : _protector.Protect(settings.IngestToken),
             PackageAppUrl = settings.PackageAppUrl,
             LastPackageDownload = settings.LastPackageDownload,

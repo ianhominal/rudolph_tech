@@ -38,8 +38,15 @@ internal static class Program
             return;
         }
 
-        ApplicationConfiguration.Initialize();
-        Application.Run(new TrayApplicationContext());
+        // The tray icon is a System.Windows.Forms.NotifyIcon (WPF has no tray icon of its own), so
+        // its visuals still go through the Windows Forms rendering setup, exactly like before.
+        System.Windows.Forms.Application.EnableVisualStyles();
+        System.Windows.Forms.Application.SetCompatibleTextRenderingDefault(false);
+
+        var app = new App();
+        app.InitializeComponent();
+        using var tray = new TrayApplicationContext();
+        app.Run();
     }
 
     private static void RequestExitOfRunningInstance()

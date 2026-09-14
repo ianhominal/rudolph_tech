@@ -9,15 +9,16 @@ public sealed class NodeLocation
 }
 
 /// <summary>
-/// Finds the Node the survey runs on. Only the copy that travels with the application counts:
-/// node\node.exe inside the install folder (how the installer lays it out) or build\node\node.exe
+/// Finds the Node the survey runs on. Only a copy that travels with the application counts:
+/// node\node.exe inside the install folder (how the installer lays it out), build\node\node.exe
 /// walking up from wherever the executable is running (how tools/get-node.ps1 leaves it during
-/// development).
+/// development), or node\node.exe under %LocalAppData%\RudolphTech (a copy the app itself may have
+/// placed there, for the case a per-user install cannot write next to the executable).
 ///
 /// There is deliberately no fallback to whatever node.exe happens to be on PATH. Bundling a pinned
 /// runtime exists precisely so the office PC does not depend on some other Node of some other
 /// version that somebody installed for something else, and picking one up silently would hide a
-/// broken install instead of showing it. When neither copy is there, this fails closed and the
+/// broken install instead of showing it. When none of the three is there, this fails closed and the
 /// message reaches the settings window and the tray balloon.
 /// </summary>
 public static class NodeLocator
@@ -30,8 +31,16 @@ public static class NodeLocator
     /// </summary>
     public const int DevelopmentSearchDepth = 8;
 
-    /// <summary> Pure: the paths to try, in order, for an application running from <paramref name="baseDirectory"/>. </summary>
-    public static IReadOnlyList<string> Candidates(string baseDirectory, int depth = DevelopmentSearchDepth)
+    /// <summary>
+    /// Pure: the paths to try, in order, for an application running from <paramref name="baseDirectory"/>.
+    /// <paramref name="localAppDataNodeExecutable"/> is the full path to the optional
+    /// %LocalAppData%\RudolphTech\node\node.exe candidate; the caller computes it (usually from
+    /// <see cref="Settings.AppPaths.Root"/>) so this method stays free of any environment lookup.
+    /// </summary>
+    public static IReadOnlyList<string> Candidates(
+        string baseDirectory,
+        string? localAppDataNodeExecutable = null,
+        int depth = DevelopmentSearchDepth)
     {
         var candidates = new List<string> { Path.Combine(baseDirectory, "node", "node.exe") };
 
@@ -41,6 +50,8 @@ public static class NodeLocator
             candidates.Add(Path.Combine(folder, "build", "node", "node.exe"));
             folder = Path.GetDirectoryName(folder);
         }
+
+        if (!string.IsNullOrEmpty(localAppDataNodeExecutable)) candidates.Add(localAppDataNodeExecutable);
 
         return candidates;
     }

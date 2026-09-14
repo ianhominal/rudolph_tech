@@ -47,6 +47,8 @@ public class SettingsStoreTests : IDisposable
         Assert.Equal(new TimeOnly(6, 45), settings.DailyTime);
         Assert.False(settings.Paused);
         Assert.False(settings.ChromeOffScreen);
+        Assert.True(settings.DailyEnabled);
+        Assert.True(settings.PendingEnabled);
         Assert.Null(settings.IngestToken);
     }
 
@@ -61,6 +63,8 @@ public class SettingsStoreTests : IDisposable
         settings.ChromeOffScreen = true;
         settings.StartWithWindows = true;
         settings.Paused = true;
+        settings.DailyEnabled = false;
+        settings.PendingEnabled = false;
         settings.IngestToken = "un-token";
         settings.LastPackageDownload = new DateTimeOffset(2026, 9, 13, 6, 45, 0, TimeSpan.Zero);
         settings.LastDailyRun = new DateOnly(2026, 9, 13);
@@ -75,6 +79,8 @@ public class SettingsStoreTests : IDisposable
         Assert.True(reloaded.ChromeOffScreen);
         Assert.True(reloaded.StartWithWindows);
         Assert.True(reloaded.Paused);
+        Assert.False(reloaded.DailyEnabled);
+        Assert.False(reloaded.PendingEnabled);
         Assert.Equal("un-token", reloaded.IngestToken);
         Assert.Equal(new DateOnly(2026, 9, 13), reloaded.LastDailyRun);
         Assert.NotNull(reloaded.LastPackageDownload);
@@ -130,6 +136,22 @@ public class SettingsStoreTests : IDisposable
         store.Save(settings);
 
         Assert.Equal(AppSettings.DefaultPendingIntervalMinutes, NewStore().Load().PendingIntervalMinutes);
+    }
+
+    [Fact]
+    public void AnOlderSettingsFileWithoutTheNewSwitchesDefaultsBothToEnabled()
+    {
+        // settings.json written before DailyEnabled and PendingEnabled existed: they must not turn
+        // into an accidentally paused schedule for whoever upgrades.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test" }""");
+
+        var settings = NewStore().Load();
+
+        Assert.True(settings.DailyEnabled);
+        Assert.True(settings.PendingEnabled);
     }
 
     [Fact]

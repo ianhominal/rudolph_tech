@@ -1,4 +1,5 @@
 using RudolphTech.Core.Agent;
+using RudolphTech.Core.Settings;
 
 namespace RudolphTech.Services;
 
@@ -9,8 +10,10 @@ namespace RudolphTech.Services;
 /// </summary>
 public static class NodeRuntime
 {
+    private static string LocalAppDataNodeExecutable => Path.Combine(AppPaths.Root, "node", "node.exe");
+
     public static NodeLocation Locate() =>
-        NodeLocator.Locate(NodeLocator.Candidates(AppContext.BaseDirectory), File.Exists);
+        NodeLocator.Locate(NodeLocator.Candidates(AppContext.BaseDirectory, LocalAppDataNodeExecutable), File.Exists);
 
     /// <summary> The npm that travels with that same Node, or null when it is not there. </summary>
     public static string? FindNpmCli(string nodeExecutable)

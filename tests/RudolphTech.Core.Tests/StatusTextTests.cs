@@ -53,6 +53,26 @@ public class StatusTextTests
     }
 
     [Fact]
+    public void SummarisesTheLinkWithThePackageDate()
+    {
+        var text = StatusText.LinkSummary(
+            "https://rudolph-mvp.vercel.app",
+            new DateTimeOffset(2026, 9, 13, 17, 55, 0, TimeSpan.FromHours(-3)));
+
+        Assert.Contains("https://rudolph-mvp.vercel.app", text);
+        Assert.Contains("13/09/2026", text);
+        Assert.Contains("17:55", text);
+    }
+
+    [Fact]
+    public void SaysTheAgentWasNeverDownloadedInTheLinkSummary()
+    {
+        var text = StatusText.LinkSummary("https://rudolph-mvp.vercel.app", null);
+
+        Assert.Contains("todavía", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void DescribesTheSchedule()
     {
         var settings = new AppSettings { PendingIntervalMinutes = 15, DailyTime = new TimeOnly(6, 45) };

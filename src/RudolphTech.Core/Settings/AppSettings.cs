@@ -34,6 +34,12 @@ public sealed class AppSettings
     /// <summary> While paused no scheduled run starts. "Relevar ahora" still works. </summary>
     public bool Paused { get; set; }
 
+    /// <summary> Whether the daily full survey is scheduled at all. Off means it never runs on its own. </summary>
+    public bool DailyEnabled { get; set; } = true;
+
+    /// <summary> Whether the periodic check for pending requests from the web app is scheduled at all. </summary>
+    public bool PendingEnabled { get; set; } = true;
+
     /// <summary> SURVEY_INGEST_TOKEN, read out of the downloaded package's .env. Stored protected. </summary>
     public string? IngestToken { get; set; }
 

@@ -25,6 +25,12 @@ public sealed class ScheduleInputs
     public bool IsRunning { get; init; }
     public DateTimeOffset? LastPendingRun { get; init; }
     public DateOnly? LastDailyRun { get; init; }
+
+    /// <summary> Off means the daily survey never starts on its own, whatever the clock says. </summary>
+    public bool DailyEnabled { get; init; } = true;
+
+    /// <summary> Off means the pending check never starts on its own, whatever the clock says. </summary>
+    public bool PendingEnabled { get; init; } = true;
 }
 
 /// <summary>
@@ -53,6 +59,8 @@ public static class ScheduleDecider
 
     private static bool IsDailyDue(ScheduleInputs inputs)
     {
+        if (!inputs.DailyEnabled) return false;
+
         var today = DateOnly.FromDateTime(inputs.Now.Date);
         if (inputs.LastDailyRun is { } last && last >= today) return false;
 
@@ -64,6 +72,7 @@ public static class ScheduleDecider
 
     private static bool IsPendingDue(ScheduleInputs inputs)
     {
+        if (!inputs.PendingEnabled) return false;
         if (inputs.LastPendingRun is not { } last) return true;
 
         var interval = inputs.PendingIntervalMinutes is >= AppSettings.MinimumPendingIntervalMinutes

@@ -3,6 +3,10 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <!-- WPF has no native tray icon; System.Windows.Forms.NotifyIcon (via TrayApplicationContext) is
+         the standard way to put one next to the clock, so Windows Forms stays referenced for that
+         one control only. Every window in this app is WPF. -->
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -19,10 +23,22 @@
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishSingleFile>false</PublishSingleFile>
+    <!-- Program.cs owns Main: the single instance check and the exit switch must run before any
+         window exists, so App.xaml must not get the SDK's auto generated Main. It is compiled as a
+         plain Page and App.xaml.cs calls InitializeComponent itself. -->
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
   </PropertyGroup>
 
   <ItemGroup>
     <None Update="Assets\rudolph.ico" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+
+  <ItemGroup>
+    <!-- WPF's implicit usings drop a few that the Windows Forms ones provided, so name them here
+         instead of repeating the same using lines across the service classes. -->
+    <Using Include="System.IO" />
+    <Using Include="System.Net.Http" />
   </ItemGroup>
 
   <ItemGroup>

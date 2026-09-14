@@ -20,7 +20,9 @@ public class ScheduleDeciderTests
         bool configured = true,
         bool isRunning = false,
         DateTimeOffset? lastPendingRun = null,
-        DateOnly? lastDailyRun = null) => new()
+        DateOnly? lastDailyRun = null,
+        bool dailyEnabled = true,
+        bool pendingEnabled = true) => new()
         {
             Now = now ?? Monday9Am,
             PendingIntervalMinutes = intervalMinutes,
@@ -30,6 +32,8 @@ public class ScheduleDeciderTests
             IsRunning = isRunning,
             LastPendingRun = lastPendingRun,
             LastDailyRun = lastDailyRun,
+            DailyEnabled = dailyEnabled,
+            PendingEnabled = pendingEnabled,
         };
 
     [Fact]
@@ -165,5 +169,61 @@ public class ScheduleDeciderTests
             lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date));
 
         Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void NeverRunsTheDailySurveyWhenItIsSwitchedOffEvenIfItsTimePassed()
+    {
+        var inputs = Inputs(
+            dailyEnabled: false,
+            lastPendingRun: Monday9Am,
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date.AddDays(-1)));
+
+        Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void NeverPollsForPendingRequestsWhenItIsSwitchedOff()
+    {
+        var inputs = Inputs(
+            pendingEnabled: false,
+            lastPendingRun: null,
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date));
+
+        Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void StaysIdleWhenBothTheDailySurveyAndThePendingCheckAreSwitchedOff()
+    {
+        var inputs = Inputs(
+            dailyEnabled: false,
+            pendingEnabled: false,
+            lastPendingRun: null,
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date.AddDays(-1)));
+
+        Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void StillRunsTheDailySurveyWhenOnlyPendingIsSwitchedOff()
+    {
+        var inputs = Inputs(
+            pendingEnabled: false,
+            lastPendingRun: null,
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date.AddDays(-1)));
+
+        Assert.Equal(ScheduledAction.Daily, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void StillPollsForPendingRequestsWhenOnlyDailyIsSwitchedOff()
+    {
+        var inputs = Inputs(
+            dailyEnabled: false,
+            lastPendingRun: Monday9Am.AddMinutes(-15),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date));
+
+        Assert.Equal(ScheduledAction.Pending, ScheduleDecider.Decide(inputs));
     }
 }

@@ -85,6 +85,50 @@ public class NodeLocatorTests
     }
 
     [Fact]
+    public void AcceptsTheCopyUnderLocalAppDataWhenNothingElseIsThere()
+    {
+        var localAppData = @"C:\Users\alguien\AppData\Local\RudolphTech\node\node.exe";
+
+        var location = NodeLocator.Locate(
+            NodeLocator.Candidates(InstallFolder, localAppData),
+            Exists(localAppData));
+
+        Assert.True(location.Found);
+        Assert.Equal(localAppData, location.Path);
+    }
+
+    [Fact]
+    public void PrefersTheBundledCopyOverTheOneUnderLocalAppData()
+    {
+        var localAppData = @"C:\Users\alguien\AppData\Local\RudolphTech\node\node.exe";
+
+        var location = NodeLocator.Locate(
+            NodeLocator.Candidates(InstallFolder, localAppData),
+            Exists(Bundled, localAppData));
+
+        Assert.Equal(Bundled, location.Path);
+    }
+
+    [Fact]
+    public void WithNoLocalAppDataCandidateGivenItIsNeverAddedToTheList()
+    {
+        var candidates = NodeLocator.Candidates(InstallFolder);
+
+        Assert.DoesNotContain(candidates, candidate => candidate.Contains("AppData", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public void StillFailsClosedWhenNeitherTheBundledNorTheLocalAppDataCopyIsThere()
+    {
+        var localAppData = @"C:\Users\alguien\AppData\Local\RudolphTech\node\node.exe";
+
+        var location = NodeLocator.Locate(NodeLocator.Candidates(InstallFolder, localAppData), Exists());
+
+        Assert.False(location.Found);
+        Assert.Equal("No se encontró el Node incluido. Reinstalá Rudolph Tech.", location.Error);
+    }
+
+    [Fact]
     public void NpmTravelsWithTheNodeThatWasFound()
     {
         Assert.Equal(

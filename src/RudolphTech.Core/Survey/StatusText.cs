@@ -22,6 +22,15 @@ public static class StatusText
         ? $"Sesión iniciada en {appUrl}."
         : "Sin sesión. Escribí la contraseña y tocá Iniciar sesión.";
 
+    /// <summary> The quiet line at the bottom of the settings window, under Vinculación con la aplicación. </summary>
+    public static string LinkSummary(string appUrl, DateTimeOffset? lastPackageDownload)
+    {
+        var package = lastPackageDownload is { } downloaded
+            ? $"Agente actualizado el {downloaded.ToString(DateAndTime)}."
+            : "El agente todavía no se descargó.";
+        return $"Vinculada con {appUrl}. {package}";
+    }
+
     public static string LastRun(RunSummary? summary)
     {
         if (summary is null) return "Todavía no se hizo ningún relevamiento.";

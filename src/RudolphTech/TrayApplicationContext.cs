@@ -5,6 +5,7 @@ using RudolphTech.Core.Settings;
 using RudolphTech.Core.Survey;
 using RudolphTech.Core.Web;
 using RudolphTech.Services;
+using RudolphTech.Settings;
 
 namespace RudolphTech;
 
@@ -30,7 +31,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly EventWaitHandle _exitSignal;
     private readonly RegisteredWaitHandle _exitWait;
 
-    private SettingsForm? _window;
+    private SettingsWindow? _window;
 
     public TrayApplicationContext()
     {
@@ -103,7 +104,11 @@ public sealed class TrayApplicationContext : ApplicationContext
         return SystemIcons.Application;
     }
 
-    /// <summary> The very first time there is nothing configured, so the window opens by itself. </summary>
+    /// <summary>
+    /// The very first time there is nothing configured, so the window opens by itself. It still asks
+    /// for the password first, the same way opening it by hand does: that one password is what links
+    /// the PC once the window is up.
+    /// </summary>
     private void BeginInvokeFirstRun()
     {
         var starter = new System.Windows.Forms.Timer { Interval = 500 };
@@ -111,7 +116,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             starter.Stop();
             starter.Dispose();
-            ShowWindow();
+            OpenSettings();
         };
         starter.Start();
     }
@@ -128,6 +133,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             IsRunning = _agent.IsRunning,
             LastPendingRun = _settings.LastPendingRun,
             LastDailyRun = _settings.LastDailyRun,
+            DailyEnabled = _settings.DailyEnabled,
+            PendingEnabled = _settings.PendingEnabled,
         });
 
         if (action == ScheduledAction.None) return;
@@ -179,23 +186,24 @@ public sealed class TrayApplicationContext : ApplicationContext
         else action();
     }
 
-    /// <summary> Opening the settings asks for the web password every time, unless nothing is configured yet. </summary>
+    /// <summary>
+    /// Opening the settings always asks for the web password first, whether the PC is already linked
+    /// (to see the configuration) or not (to link it). There is only one password: whatever is typed
+    /// here is what the settings window reuses in memory for Actualizar agente and Volver a vincular,
+    /// so it is never asked twice.
+    /// </summary>
     private void OpenSettings()
     {
-        if (_window is { IsDisposed: false })
+        if (_window is not null)
         {
             _window.Activate();
             return;
         }
 
-        if (!_settings.IsConfigured)
-        {
-            ShowWindow();
-            return;
-        }
+        var promptText = LinkFlow.PromptText(_settings.IsConfigured);
+        var prompt = new PasswordWindow(_settings.AppUrl, promptText, VerifyPasswordAsync);
 
-        using var prompt = new PasswordPromptForm(_settings.AppUrl, VerifyPasswordAsync);
-        if (prompt.ShowDialog() == DialogResult.OK) ShowWindow();
+        if (prompt.ShowDialog() == true) ShowWindow(prompt.VerifiedPassword);
     }
 
     private async Task<(bool Ok, string Error)> VerifyPasswordAsync(string password, CancellationToken cancellation)
@@ -205,10 +213,10 @@ public sealed class TrayApplicationContext : ApplicationContext
         return (false, result.Offline ? "Sin conexión con la aplicación. Probá de nuevo cuando vuelva internet." : result.Error);
     }
 
-    private void ShowWindow()
+    private void ShowWindow(string? password)
     {
-        _window = new SettingsForm(_agent);
-        _window.FormClosed += (_, _) =>
+        _window = new SettingsWindow(_agent, password);
+        _window.Closed += (_, _) =>
         {
             _window = null;
             _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning);
