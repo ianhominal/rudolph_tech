@@ -45,6 +45,33 @@ public sealed class Heartbeat
     public bool Paused { get; init; }
 
     public bool Running { get; init; }
+
+    /// <summary>
+    /// Whether the periodic check for surveys requested from the web is scheduled at all. Off means a
+    /// survey asked for there is never picked up, however connected and unpaused this program looks,
+    /// which is the one case where a reassuring line on the web would be worse than the stuck one it
+    /// replaced.
+    /// </summary>
+    public bool ServesRequests { get; init; }
+
+    /// <summary> Past this the office PC is telling a story about its own clock, and the web app refuses it. </summary>
+    public const int MaximumNextRunSeconds = 31 * 24 * 60 * 60;
+
+    /// <summary>
+    /// Builds one from a scheduled instant, clamped into exactly the range the web app accepts
+    /// (web/src/lib/agent-presence.ts): an overdue survey reports zero seconds, which reads there as
+    /// "arranca en un momento", and nothing can turn into a rejected request.
+    /// </summary>
+    public static Heartbeat For(DateTimeOffset? nextRunAt, DateTimeOffset now, bool paused, bool running, bool servesRequests)
+    {
+        int? seconds = null;
+        if (nextRunAt is { } next)
+        {
+            var remaining = (next - now).TotalSeconds;
+            seconds = remaining <= 0 ? 0 : (int)Math.Min(MaximumNextRunSeconds, Math.Round(remaining));
+        }
+        return new Heartbeat { NextRunInSeconds = seconds, Paused = paused, Running = running, ServesRequests = servesRequests };
+    }
 }
 
 /// <summary>

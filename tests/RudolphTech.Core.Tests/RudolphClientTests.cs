@@ -235,7 +235,7 @@ public class RudolphClientTests
         var sent = await client.PostHeartbeatAsync(
             "https://x.test",
             "el-token",
-            new Heartbeat { NextRunInSeconds = 240, Paused = false, Running = true },
+            new Heartbeat { NextRunInSeconds = 240, Paused = false, Running = true, ServesRequests = true },
             CancellationToken.None);
 
         Assert.True(sent);
@@ -246,7 +246,7 @@ public class RudolphClientTests
         Assert.Equal("el-token", request.Headers.Authorization.Parameter);
         Assert.Equal("application/json", request.Content!.Headers.ContentType!.MediaType);
         // A duration, never a date: the office PC's clock does not get to decide whether it looks online.
-        Assert.Equal("""{"nextRunInSeconds":240,"paused":false,"running":true}""", handler.Bodies[0]);
+        Assert.Equal("""{"nextRunInSeconds":240,"paused":false,"running":true,"servesRequests":true}""", handler.Bodies[0]);
     }
 
     [Fact]
@@ -258,10 +258,10 @@ public class RudolphClientTests
         await client.PostHeartbeatAsync(
             "https://x.test/",
             "el-token",
-            new Heartbeat { NextRunInSeconds = null, Paused = true, Running = false },
+            new Heartbeat { NextRunInSeconds = null, Paused = true, Running = false, ServesRequests = false },
             CancellationToken.None);
 
-        Assert.Equal("""{"nextRunInSeconds":null,"paused":true,"running":false}""", handler.Bodies[0]);
+        Assert.Equal("""{"nextRunInSeconds":null,"paused":true,"running":false,"servesRequests":false}""", handler.Bodies[0]);
     }
 
     [Fact]
@@ -275,7 +275,7 @@ public class RudolphClientTests
         var sent = await client.PostHeartbeatAsync(
             "https://x.test",
             "el-token",
-            new Heartbeat { NextRunInSeconds = 60, Paused = false, Running = false },
+            new Heartbeat { NextRunInSeconds = 60, Paused = false, Running = false, ServesRequests = true },
             CancellationToken.None);
 
         Assert.False(sent);
@@ -290,7 +290,7 @@ public class RudolphClientTests
         var sent = await client.PostHeartbeatAsync(
             "https://x.test",
             "el-token",
-            new Heartbeat { NextRunInSeconds = 60, Paused = false, Running = false },
+            new Heartbeat { NextRunInSeconds = 60, Paused = false, Running = false, ServesRequests = true },
             CancellationToken.None);
 
         Assert.False(sent);

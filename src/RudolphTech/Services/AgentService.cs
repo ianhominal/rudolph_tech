@@ -1,5 +1,6 @@
 using RudolphTech.Core.Agent;
 using RudolphTech.Core.Logging;
+using RudolphTech.Core.Scheduling;
 using RudolphTech.Core.Settings;
 using RudolphTech.Core.Survey;
 using RudolphTech.Core.Web;
@@ -16,6 +17,14 @@ namespace RudolphTech.Services;
 /// package refresh that finds no session simply logs it and lets the survey run with the scripts
 /// already on disk, which keep working because the ingest token is stored protected.
 /// </summary>
+/// <summary> What came of telling the web app this program is open. "Not linked" is not a failure: there is nothing to tell it with yet. </summary>
+public enum HeartbeatOutcome
+{
+    NotLinked,
+    Sent,
+    Failed,
+}
+
 public sealed class AgentService : IDisposable
 {
     private readonly SettingsStore _store;
@@ -23,6 +32,7 @@ public sealed class AgentService : IDisposable
     private readonly RudolphClient _client;
     private readonly HttpClient _http;
     private readonly SemaphoreSlim _runGate = new(1, 1);
+    private readonly SemaphoreSlim _heartbeatGate = new(1, 1);
 
     private string? _sessionCookie;
     private CancellationTokenSource? _running;
@@ -70,32 +80,54 @@ public sealed class AgentService : IDisposable
 
     public void ForgetSession() => _sessionCookie = null;
 
-    /// <summary>
-    /// Tells the web app this program is open and when its next survey is due, so the Competencia
-    /// screen can say "proximo relevamiento en 4 min" instead of leaving a requested survey looking
-    /// stuck with no way to tell a wait from a closed program.
-    ///
-    /// Sends a duration rather than a date on purpose (see <see cref="Heartbeat"/>), clamped into the
-    /// range the web app accepts: an overdue run reports zero seconds, which reads there as "arranca
-    /// en un momento". Silent when the PC is not linked yet, since there is no token to send it with.
-    /// </summary>
-    public async Task<bool> SendHeartbeatAsync(DateTimeOffset? nextRunAt, DateTimeOffset now, CancellationToken cancellation)
+    /// <summary> Everything the schedule depends on, read at this instant. Shared so the tray's own tick and the heartbeat never disagree about it. </summary>
+    public ScheduleInputs CurrentScheduleInputs(DateTimeOffset now) => new()
     {
-        if (!Settings.IsConfigured || Settings.IngestToken is not { } token) return false;
+        Now = now,
+        PendingIntervalMinutes = Settings.PendingIntervalMinutes,
+        DailyTime = Settings.DailyTime,
+        Paused = Settings.Paused,
+        Configured = Settings.IsConfigured,
+        IsRunning = IsRunning,
+        LastPendingRun = Settings.LastPendingRun,
+        LastDailyRun = Settings.LastDailyRun,
+        DailyEnabled = Settings.DailyEnabled,
+        PendingEnabled = Settings.PendingEnabled,
+    };
 
-        int? seconds = null;
-        if (nextRunAt is { } next)
+    /// <summary>
+    /// Tells the web app this program is open and when its next survey is due, so the Competencia screen
+    /// can say "proximo relevamiento en 4 min" instead of leaving a requested survey looking stuck with
+    /// no way to tell a wait from a closed program.
+    ///
+    /// Reads the state <em>after</em> taking the gate, and never sends two at once. Both matter: starting
+    /// a run raises RunningChanged while the tick's own heartbeat is still in flight, and two unordered
+    /// posts could leave the web app holding "no está relevando" over a survey that is running.
+    /// </summary>
+    public async Task<HeartbeatOutcome> SendHeartbeatAsync(CancellationToken cancellation)
+    {
+        if (!Settings.IsConfigured || Settings.IngestToken is not { } token) return HeartbeatOutcome.NotLinked;
+
+        await _heartbeatGate.WaitAsync(cancellation);
+        try
         {
-            var remaining = (next - now).TotalSeconds;
-            seconds = remaining <= 0 ? 0 : (int)Math.Min(MaximumNextRunSeconds, Math.Round(remaining));
+            var now = DateTimeOffset.Now;
+            var heartbeat = Heartbeat.For(
+                ScheduleDecider.NextRunAt(CurrentScheduleInputs(now)),
+                now,
+                Settings.Paused,
+                IsRunning,
+                Settings.PendingEnabled);
+
+            return await _client.PostHeartbeatAsync(Settings.AppUrl, token, heartbeat, cancellation)
+                ? HeartbeatOutcome.Sent
+                : HeartbeatOutcome.Failed;
         }
-
-        var heartbeat = new Heartbeat { NextRunInSeconds = seconds, Paused = Settings.Paused, Running = IsRunning };
-        return await _client.PostHeartbeatAsync(Settings.AppUrl, token, heartbeat, cancellation);
+        finally
+        {
+            _heartbeatGate.Release();
+        }
     }
-
-    /// <summary> Mirrors the cap the web app's own validator applies, so a nonsense schedule never becomes a rejected request. </summary>
-    private const int MaximumNextRunSeconds = 31 * 24 * 60 * 60;
 
     /// <summary>
     /// Downloads the package again and unpacks it, keeping the token out of any file. Needs a
@@ -319,6 +351,7 @@ public sealed class AgentService : IDisposable
     {
         _running?.Cancel();
         _runGate.Dispose();
+        _heartbeatGate.Dispose();
         _http.Dispose();
     }
 }
