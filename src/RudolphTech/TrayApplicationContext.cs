@@ -133,39 +133,32 @@ public sealed class TrayApplicationContext : ApplicationContext
         starter.Start();
     }
 
-    /// <summary> Everything the schedule depends on, read at this instant. </summary>
-    private ScheduleInputs CurrentScheduleInputs(DateTimeOffset now) => new()
-    {
-        Now = now,
-        PendingIntervalMinutes = _settings.PendingIntervalMinutes,
-        DailyTime = _settings.DailyTime,
-        Paused = _settings.Paused,
-        Configured = _settings.IsConfigured,
-        IsRunning = _agent.IsRunning,
-        LastPendingRun = _settings.LastPendingRun,
-        LastDailyRun = _settings.LastDailyRun,
-        DailyEnabled = _settings.DailyEnabled,
-        PendingEnabled = _settings.PendingEnabled,
-    };
-
     /// <summary>
     /// Reports to the web app, without ever getting in the way: it is started and forgotten, and a
     /// failure is only worth one line in the log the first time it happens. A survey running for
     /// twenty minutes must keep being reported, which is why this is not tied to the schedule.
+    ///
+    /// AgentService reads the state after taking its own gate, so calls that overlap (the tick's, and
+    /// the one a run starting raises straight afterwards) still leave the newest state on the web.
     /// </summary>
     private async void SendHeartbeat()
     {
-        var now = DateTimeOffset.Now;
-        _lastHeartbeat = now;
+        _lastHeartbeat = DateTimeOffset.Now;
         try
         {
-            var sent = await _agent.SendHeartbeatAsync(ScheduleDecider.NextRunAt(CurrentScheduleInputs(now)), now, CancellationToken.None);
-            if (sent == _heartbeatFailing)
+            var outcome = await _agent.SendHeartbeatAsync(CancellationToken.None);
+            // Nothing to say before the PC is linked: there is no address and no token to say it with, and
+            // "no se pudo avisarle a la web" as the first line of a fresh install points at the wrong thing.
+            if (outcome == HeartbeatOutcome.NotLinked) return;
+
+            var failing = outcome == HeartbeatOutcome.Failed;
+            if (failing != _heartbeatFailing)
             {
                 // Only the change is worth saying: this fires every couple of minutes all day.
-                _heartbeatFailing = !sent;
-                if (!sent) _log.Write("No se pudo avisarle a la web que el programa está abierto. Se reintenta solo.");
-                else _log.Write("Se restableció el aviso a la web.");
+                _heartbeatFailing = failing;
+                _log.Write(failing
+                    ? "No se pudo avisarle a la web que el programa está abierto. Se reintenta solo."
+                    : "Se restableció el aviso a la web.");
             }
         }
         catch (Exception exception)
@@ -179,7 +172,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         var now = DateTimeOffset.Now;
         if (_lastHeartbeat is not { } last || now - last >= HeartbeatInterval) SendHeartbeat();
 
-        var action = ScheduleDecider.Decide(CurrentScheduleInputs(now));
+        var action = ScheduleDecider.Decide(_agent.CurrentScheduleInputs(now));
 
         if (action == ScheduledAction.None) return;
 

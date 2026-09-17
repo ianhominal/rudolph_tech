@@ -329,6 +329,71 @@ public class ScheduleDeciderTests
     }
 
     [Fact]
+    public void NextRunAtIgnoresASurveyAlreadyInProgress()
+    {
+        // Deliberate, and the only reason it is safe: the web app suppresses the schedule on its own while
+        // a run is reported. Returning null here instead would blank the countdown for the twenty minutes a
+        // full survey takes, which reads as "nothing is scheduled any more".
+        var inputs = Inputs(
+            intervalMinutes: 5,
+            lastPendingRun: Monday9Am.AddMinutes(-2),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            isRunning: true);
+        Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+        Assert.Equal(Monday9Am.AddMinutes(3), ScheduleDecider.NextRunAt(inputs));
+    }
+
+    [Fact]
+    public void ADailyRunRecordedInTheFutureDoesNotPromiseSurveysDecideRefusesToStart()
+    {
+        // A PC whose clock was days ahead when the survey ran, then put right. IsDailyDue waits until the
+        // recorded day is past, so NextRunAt has to wait too instead of promising one every morning.
+        var last = DateOnly.FromDateTime(Monday9Am.Date).AddDays(5);
+        var inputs = Inputs(lastDailyRun: last, pendingEnabled: false);
+
+        var promised = ScheduleDecider.NextRunAt(inputs);
+        Assert.Equal(new DateTimeOffset(last.AddDays(1).ToDateTime(new TimeOnly(6, 45)), TimeSpan.FromHours(-3)), promised);
+    }
+
+    [Fact]
+    public void WhateverNextRunAtPromisesIsAnInstantDecideActsOn()
+    {
+        // The contract in one line, over every shape of schedule: the web app counts down to this instant,
+        // so an instant where Decide does nothing is the web telling the client a survey that never comes.
+        var shapes = new[]
+        {
+            Inputs(intervalMinutes: 5, lastPendingRun: Monday9Am.AddMinutes(-1), lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date)),
+            Inputs(intervalMinutes: 5, lastPendingRun: null, lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date)),
+            Inputs(now: Monday5Am, intervalMinutes: 180, lastPendingRun: Monday5Am, lastDailyRun: DateOnly.FromDateTime(Monday5Am.Date).AddDays(-1)),
+            Inputs(lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date), pendingEnabled: false),
+            Inputs(now: Monday9Am.AddHours(1), lastDailyRun: null, pendingEnabled: false),
+            Inputs(lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date).AddDays(5), pendingEnabled: false),
+            Inputs(intervalMinutes: 0, lastPendingRun: Monday9Am, dailyEnabled: false),
+        };
+
+        foreach (var shape in shapes)
+        {
+            var promised = ScheduleDecider.NextRunAt(shape);
+            Assert.NotNull(promised);
+
+            var thereAndThen = new ScheduleInputs
+            {
+                Now = promised.Value,
+                PendingIntervalMinutes = shape.PendingIntervalMinutes,
+                DailyTime = shape.DailyTime,
+                Paused = shape.Paused,
+                Configured = shape.Configured,
+                IsRunning = false,
+                LastPendingRun = shape.LastPendingRun,
+                LastDailyRun = shape.LastDailyRun,
+                DailyEnabled = shape.DailyEnabled,
+                PendingEnabled = shape.PendingEnabled,
+            };
+            Assert.NotEqual(ScheduledAction.None, ScheduleDecider.Decide(thereAndThen));
+        }
+    }
+
+    [Fact]
     public void NextRunAtAgreesWithDecideAboutWhatIsDueNow()
     {
         // The contract between the two: if Decide wants to start something, NextRunAt is not in the future.

@@ -119,8 +119,14 @@ public static class ScheduleDecider
         var today = DateOnly.FromDateTime(inputs.Now.Date);
         var scheduled = new DateTimeOffset(today.ToDateTime(inputs.DailyTime), inputs.Now.Offset);
 
-        // Already done today, so the next one is tomorrow's.
-        if (inputs.LastDailyRun is { } last && last >= today) return scheduled.AddDays(1);
+        // Already done for today or later, so the next one is the day after whatever was recorded. Counting
+        // from today instead would promise a survey every morning that IsDailyDue refuses to start, for as
+        // many days as a wrong clock put that record into the future.
+        if (inputs.LastDailyRun is { } last && last >= today)
+        {
+            var nextDay = last.AddDays(1);
+            return new DateTimeOffset(nextDay.ToDateTime(inputs.DailyTime), inputs.Now.Offset);
+        }
 
         if (inputs.Now < scheduled) return scheduled;
 

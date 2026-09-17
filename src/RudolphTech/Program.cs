@@ -19,7 +19,11 @@ internal static class Program
     [STAThread]
     private static void Main(string[] args)
     {
-        if (args.Contains(ExitSwitch, StringComparer.OrdinalIgnoreCase))
+        // A rudolph:// launch can only ever mean "open this program", so it is never allowed to close it.
+        // Browsers escape quotes and spaces before handing a URI to ShellExecute, which is what would be
+        // needed to smuggle a second argument past the registered `"<exe>" "%1"`, so this is belt on top
+        // of braces rather than a hole being closed. It costs one condition.
+        if (!AppProtocol.IsProtocolLaunch(args) && args.Contains(ExitSwitch, StringComparer.OrdinalIgnoreCase))
         {
             RequestExitOfRunningInstance();
             return;
