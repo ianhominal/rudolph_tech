@@ -348,7 +348,16 @@ public sealed class TrayApplicationContext : ApplicationContext
         _log.Write("Rudolph Tech se cerró.");
         _timer.Stop();
         _tray.Visible = false;
-        ExitThread();
+
+        // Not ExitThread(): that ends a Windows Forms message loop, and there is none. What is running is
+        // WPF's, started by Program.cs's app.Run(), and App.xaml declares ShutdownMode="OnExplicitShutdown"
+        // so nothing but this call ends it. Getting this wrong is silent and nasty: "Salir" hid the tray
+        // icon, stopped the timer, wrote "Rudolph Tech se cerró" in the log, and left the process alive and
+        // invisible, holding the single instance mutex so the next start answered "ya está abierto".
+        // Through the dispatcher because the exit signal (RudolphTech.exe --salir) arrives on a thread pool
+        // thread, and Shutdown belongs to the thread that owns the loop.
+        if (System.Windows.Application.Current is { } app) app.Dispatcher.Invoke(app.Shutdown);
+        else ExitThread();
     }
 
     protected override void Dispose(bool disposing)
