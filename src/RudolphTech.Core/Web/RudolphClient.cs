@@ -31,8 +31,25 @@ public sealed class DownloadResult
 }
 
 /// <summary>
+/// Rudolph Tech's sign of life, as the web app's POST /api/relevamiento/heartbeat takes it.
+///
+/// The next run travels as a duration and never as a date, on purpose: the app stamps both dates
+/// with its own clock (web/src/lib/agent-presence.ts), so a wrong clock on the office PC cannot
+/// leave it looking permanently offline, nor permanently fresh.
+/// </summary>
+public sealed class Heartbeat
+{
+    /// <summary> Seconds until the next scheduled survey, or null when none is scheduled (paused, or not linked). </summary>
+    public int? NextRunInSeconds { get; init; }
+
+    public bool Paused { get; init; }
+
+    public bool Running { get; init; }
+}
+
+/// <summary>
 /// Talks to the deployed web app the same way a browser does, because that is what its two
-/// endpoints expect.
+/// browser-shaped endpoints expect.
 ///
 /// POST /api/ingresar takes a form with "password" and "next", answers 303 and sets the
 /// rudolph_session cookie (web/src/app/api/ingresar/route.ts). A wrong password is also a 303, back
@@ -158,6 +175,36 @@ public sealed class RudolphClient
             return new DownloadResult { Success = true, Content = content };
         }
     }
+
+    /// <summary>
+    /// Tells the web app the program is open and when it will run next. Fires on a timer long after
+    /// whoever typed the password closed the settings window, so it carries the stored ingest token
+    /// rather than the session cookie, exactly like the survey's own uploads do.
+    ///
+    /// Never throws and never disturbs anything: a PC with no internet just misses a few heartbeats
+    /// and the web app says the program is closed until they come back. Returns whether it landed,
+    /// only so the caller can decide about writing one line in the log.
+    /// </summary>
+    public async Task<bool> PostHeartbeatAsync(string appUrl, string ingestToken, Heartbeat heartbeat, CancellationToken cancellation)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, AppUrl.HeartbeatEndpoint(appUrl))
+        {
+            Content = new StringContent(JsonSerializer.Serialize(heartbeat, HeartbeatJson), System.Text.Encoding.UTF8, "application/json"),
+        };
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", ingestToken);
+
+        try
+        {
+            using var response = await _http.SendAsync(request, cancellation);
+            return response.IsSuccessStatusCode;
+        }
+        catch (Exception exception) when (IsNetworkFailure(exception))
+        {
+            return false;
+        }
+    }
+
+    private static readonly JsonSerializerOptions HeartbeatJson = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     /// <summary>
     /// The trial gate's answer, or null when this response is not that.

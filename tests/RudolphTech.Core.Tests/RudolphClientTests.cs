@@ -218,4 +218,81 @@ public class RudolphClientTests
 
         Assert.DoesNotContain("secreta", handler.Requests[0].RequestUri!.ToString());
     }
+
+    // --- Heartbeat ----------------------------------------------------------
+    //
+    // How the web app tells "the PC picks this up in three minutes" apart from "the program is closed
+    // and nobody is ever going to pick it up". Unlike the two calls above, this one carries the ingest
+    // token rather than the session cookie: it fires on a timer, long after whoever typed the password
+    // closed the settings window.
+
+    [Fact]
+    public async Task PostsTheHeartbeatWithTheIngestTokenAndTheNextRunAsADuration()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new RudolphClient(new HttpClient(handler));
+
+        var sent = await client.PostHeartbeatAsync(
+            "https://x.test",
+            "el-token",
+            new Heartbeat { NextRunInSeconds = 240, Paused = false, Running = true },
+            CancellationToken.None);
+
+        Assert.True(sent);
+        var request = Assert.Single(handler.Requests);
+        Assert.Equal(HttpMethod.Post, request.Method);
+        Assert.Equal("https://x.test/api/relevamiento/heartbeat", request.RequestUri!.ToString());
+        Assert.Equal("Bearer", request.Headers.Authorization!.Scheme);
+        Assert.Equal("el-token", request.Headers.Authorization.Parameter);
+        Assert.Equal("application/json", request.Content!.Headers.ContentType!.MediaType);
+        // A duration, never a date: the office PC's clock does not get to decide whether it looks online.
+        Assert.Equal("""{"nextRunInSeconds":240,"paused":false,"running":true}""", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task SendsANullNextRunWhenNothingIsScheduled()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => new HttpResponseMessage(HttpStatusCode.OK));
+        var client = new RudolphClient(new HttpClient(handler));
+
+        await client.PostHeartbeatAsync(
+            "https://x.test/",
+            "el-token",
+            new Heartbeat { NextRunInSeconds = null, Paused = true, Running = false },
+            CancellationToken.None);
+
+        Assert.Equal("""{"nextRunInSeconds":null,"paused":true,"running":false}""", handler.Bodies[0]);
+    }
+
+    [Fact]
+    public async Task ReportsAFailedHeartbeatWithoutThrowing()
+    {
+        // It fires every couple of minutes: a laptop on a train must not turn that into a crash, and the
+        // caller only needs to know whether to write one line in the log.
+        var handler = new FakeHttpMessageHandler((_, _) => throw new HttpRequestException("sin red"));
+        var client = new RudolphClient(new HttpClient(handler));
+
+        var sent = await client.PostHeartbeatAsync(
+            "https://x.test",
+            "el-token",
+            new Heartbeat { NextRunInSeconds = 60, Paused = false, Running = false },
+            CancellationToken.None);
+
+        Assert.False(sent);
+    }
+
+    [Fact]
+    public async Task ReportsARefusedHeartbeatAsNotSent()
+    {
+        var handler = new FakeHttpMessageHandler((_, _) => new HttpResponseMessage(HttpStatusCode.Unauthorized));
+        var client = new RudolphClient(new HttpClient(handler));
+
+        var sent = await client.PostHeartbeatAsync(
+            "https://x.test",
+            "el-token",
+            new Heartbeat { NextRunInSeconds = 60, Paused = false, Running = false },
+            CancellationToken.None);
+
+        Assert.False(sent);
+    }
 }

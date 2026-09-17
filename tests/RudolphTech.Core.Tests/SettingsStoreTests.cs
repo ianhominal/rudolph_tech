@@ -38,12 +38,15 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
-    public void TheDefaultsMatchWhatTheOldScheduledTasksDid()
+    public void TheDefaultsAreTheOnesAFreshInstallRunsWith()
     {
         var settings = NewStore().Load();
 
         Assert.Equal("https://rudolph-mvp.vercel.app", settings.AppUrl);
-        Assert.Equal(15, settings.PendingIntervalMinutes);
+        // Five, not the old scheduled task's fifteen: that is how long a survey asked for from the web
+        // sits there before this PC even looks for it, and fifteen minutes of "Relevamiento solicitado"
+        // is indistinguishable from nothing happening at all.
+        Assert.Equal(5, settings.PendingIntervalMinutes);
         Assert.Equal(new TimeOnly(6, 45), settings.DailyTime);
         Assert.False(settings.Paused);
         Assert.False(settings.ChromeOffScreen);
