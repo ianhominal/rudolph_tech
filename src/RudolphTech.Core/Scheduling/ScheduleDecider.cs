@@ -75,11 +75,59 @@ public static class ScheduleDecider
         if (!inputs.PendingEnabled) return false;
         if (inputs.LastPendingRun is not { } last) return true;
 
-        var interval = inputs.PendingIntervalMinutes is >= AppSettings.MinimumPendingIntervalMinutes
+        return inputs.Now - last >= TimeSpan.FromMinutes(EffectiveIntervalMinutes(inputs));
+    }
+
+    /// <summary> Hand edited or outdated values come back into range here, the same way AppSettings.Clamp does on load. </summary>
+    private static int EffectiveIntervalMinutes(ScheduleInputs inputs) =>
+        inputs.PendingIntervalMinutes is >= AppSettings.MinimumPendingIntervalMinutes
             and <= AppSettings.MaximumPendingIntervalMinutes
             ? inputs.PendingIntervalMinutes
             : AppSettings.DefaultPendingIntervalMinutes;
 
-        return inputs.Now - last >= TimeSpan.FromMinutes(interval);
+    /// <summary>
+    /// When the next survey is due, or null when none is scheduled at all (paused, unlinked, or both
+    /// schedules off). The same rules as <see cref="Decide"/> read forwards instead of as a yes or no:
+    /// the web app shows this as "proximo relevamiento en 4 min" next to whether the program is open
+    /// (web/src/lib/agent-presence.ts), so the two must never disagree about what is about to happen.
+    ///
+    /// Deliberately blind to <see cref="ScheduleInputs.IsRunning"/>: a survey already in progress is
+    /// not a schedule, and the web says so on its own line.
+    ///
+    /// An overdue run reports the time it was due rather than "now", so a PC that was asleep does not
+    /// show a countdown that keeps restarting.
+    /// </summary>
+    public static DateTimeOffset? NextRunAt(ScheduleInputs inputs)
+    {
+        if (inputs.Paused || !inputs.Configured) return null;
+
+        DateTimeOffset? daily = inputs.DailyEnabled ? NextDailyAt(inputs) : null;
+        DateTimeOffset? pending = inputs.PendingEnabled ? NextPendingAt(inputs) : null;
+
+        if (daily is null) return pending;
+        if (pending is null) return daily;
+        return daily < pending ? daily : pending;
+    }
+
+    private static DateTimeOffset NextPendingAt(ScheduleInputs inputs) =>
+        inputs.LastPendingRun is { } last
+            ? last + TimeSpan.FromMinutes(EffectiveIntervalMinutes(inputs))
+            : inputs.Now;
+
+    private static DateTimeOffset NextDailyAt(ScheduleInputs inputs)
+    {
+        var today = DateOnly.FromDateTime(inputs.Now.Date);
+        var scheduled = new DateTimeOffset(today.ToDateTime(inputs.DailyTime), inputs.Now.Offset);
+
+        // Already done today, so the next one is tomorrow's.
+        if (inputs.LastDailyRun is { } last && last >= today) return scheduled.AddDays(1);
+
+        if (inputs.Now < scheduled) return scheduled;
+
+        // Past its time and not run yet: due, unless this would be a first ever survey so late that
+        // IsDailyDue has already given up on today (same FirstDailyGrace rule).
+        return inputs.LastDailyRun is not null || inputs.Now - scheduled <= FirstDailyGrace
+            ? scheduled
+            : scheduled.AddDays(1);
     }
 }

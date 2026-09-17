@@ -71,6 +71,33 @@ public sealed class AgentService : IDisposable
     public void ForgetSession() => _sessionCookie = null;
 
     /// <summary>
+    /// Tells the web app this program is open and when its next survey is due, so the Competencia
+    /// screen can say "proximo relevamiento en 4 min" instead of leaving a requested survey looking
+    /// stuck with no way to tell a wait from a closed program.
+    ///
+    /// Sends a duration rather than a date on purpose (see <see cref="Heartbeat"/>), clamped into the
+    /// range the web app accepts: an overdue run reports zero seconds, which reads there as "arranca
+    /// en un momento". Silent when the PC is not linked yet, since there is no token to send it with.
+    /// </summary>
+    public async Task<bool> SendHeartbeatAsync(DateTimeOffset? nextRunAt, DateTimeOffset now, CancellationToken cancellation)
+    {
+        if (!Settings.IsConfigured || Settings.IngestToken is not { } token) return false;
+
+        int? seconds = null;
+        if (nextRunAt is { } next)
+        {
+            var remaining = (next - now).TotalSeconds;
+            seconds = remaining <= 0 ? 0 : (int)Math.Min(MaximumNextRunSeconds, Math.Round(remaining));
+        }
+
+        var heartbeat = new Heartbeat { NextRunInSeconds = seconds, Paused = Settings.Paused, Running = IsRunning };
+        return await _client.PostHeartbeatAsync(Settings.AppUrl, token, heartbeat, cancellation);
+    }
+
+    /// <summary> Mirrors the cap the web app's own validator applies, so a nonsense schedule never becomes a rejected request. </summary>
+    private const int MaximumNextRunSeconds = 31 * 24 * 60 * 60;
+
+    /// <summary>
     /// Downloads the package again and unpacks it, keeping the token out of any file. Needs a
     /// session, which only typing the password can produce.
     /// </summary>

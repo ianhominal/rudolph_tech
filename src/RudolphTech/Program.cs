@@ -1,3 +1,5 @@
+using RudolphTech.Core.Web;
+
 namespace RudolphTech;
 
 internal static class Program
@@ -30,13 +32,20 @@ internal static class Program
             // must disappear quietly instead of greeting the person with a dialog.
             if (args.Contains(StartupSwitch, StringComparer.OrdinalIgnoreCase)) return;
 
-            MessageBox.Show(
-                "Rudolph Tech ya está abierto. Miralo en los iconos al lado del reloj.",
-                "Rudolph Tech",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Information);
+            // Somebody clicked the web app's "Abrir Rudolph Tech" link while the program was open all
+            // along, which means the web app is not receiving its heartbeat rather than that the program
+            // is closed. Say so, instead of leaving them clicking a link that appears to do nothing.
+            var message = AppProtocol.IsProtocolLaunch(args)
+                ? "Rudolph Tech ya está abierto. Miralo en los iconos al lado del reloj." + Environment.NewLine + Environment.NewLine
+                    + "Si la web dice que está cerrado, revisá la conexión a internet de esta PC."
+                : "Rudolph Tech ya está abierto. Miralo en los iconos al lado del reloj.";
+
+            MessageBox.Show(message, "Rudolph Tech", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+
+        // Anything else (including a rudolph:// launch, which Windows passes as the whole URI) means
+        // "just start normally": the link's only job is getting the program open.
 
         // The tray icon is a System.Windows.Forms.NotifyIcon (WPF has no tray icon of its own), so
         // its visuals still go through the Windows Forms rendering setup, exactly like before.

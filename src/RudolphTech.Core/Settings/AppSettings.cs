@@ -9,7 +9,13 @@ namespace RudolphTech.Core.Settings;
 public sealed class AppSettings
 {
     public const string DefaultAppUrl = "https://rudolph-mvp.vercel.app";
-    public const int DefaultPendingIntervalMinutes = 15;
+    /// <summary>
+    /// How long a survey asked for from the web waits before the office PC even looks for it. It used
+    /// to be 15, which is a long time to stare at "Relevamiento solicitado" wondering whether anything
+    /// is going to happen. The floor is 5 (see <see cref="MinimumPendingIntervalMinutes"/>) because each
+    /// check spawns a Node process, so there is no point asking every minute.
+    /// </summary>
+    public const int DefaultPendingIntervalMinutes = 5;
     public const int MinimumPendingIntervalMinutes = 5;
     public const int MaximumPendingIntervalMinutes = 720;
 

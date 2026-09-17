@@ -33,4 +33,11 @@ public class AppUrlTests
         Assert.Equal("https://x.test/api/ingresar", AppUrl.LoginEndpoint("https://x.test"));
         Assert.Equal("https://x.test/api/agente/descargar", AppUrl.PackageEndpoint("https://x.test"));
     }
+
+    [Fact]
+    public void BuildsTheHeartbeatEndpointWithoutDoublingTheSlash()
+    {
+        Assert.Equal("https://x.test/api/relevamiento/heartbeat", AppUrl.HeartbeatEndpoint("https://x.test"));
+        Assert.Equal("https://x.test/api/relevamiento/heartbeat", AppUrl.HeartbeatEndpoint("https://x.test/"));
+    }
 }

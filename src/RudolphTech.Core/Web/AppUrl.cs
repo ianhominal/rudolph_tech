@@ -7,6 +7,7 @@ public static class AppUrl
 {
     public const string LoginPath = "/api/ingresar";
     public const string PackagePath = "/api/agente/descargar";
+    public const string HeartbeatPath = "/api/relevamiento/heartbeat";
 
     /// <summary> Adds https:// when it is missing and drops trailing slashes. Throws on anything unusable. </summary>
     public static string Normalize(string input) =>
@@ -32,4 +33,6 @@ public static class AppUrl
     public static string LoginEndpoint(string appUrl) => appUrl.TrimEnd('/') + LoginPath;
 
     public static string PackageEndpoint(string appUrl) => appUrl.TrimEnd('/') + PackagePath;
+
+    public static string HeartbeatEndpoint(string appUrl) => appUrl.TrimEnd('/') + HeartbeatPath;
 }

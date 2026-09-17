@@ -68,6 +68,18 @@ Source: "{#NodeDir}\*"; DestDir: "{app}\node"; Flags: ignoreversion recursesubdi
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
 Name: "{userstartup}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--startup"; Tasks: startupicon
 
+[Registry]
+; The rudolph:// scheme, so the web app's "Abrir Rudolph Tech" link can start this program when it is
+; closed (src/RudolphTech.Core/Web/AppProtocol.cs, web/src/app/competencia/SurveyStatus.tsx). A page
+; cannot launch a program on its own; this is the only door Windows offers, the browser still asks the
+; person to confirm, and it does nothing at all on a PC where Rudolph Tech was never installed.
+; Written under HKCR (which is HKLM\Software\Classes here, since the installer runs as admin) and
+; removed with the program.
+Root: HKCR; Subkey: "rudolph"; ValueType: string; ValueName: ""; ValueData: "URL:Rudolph Tech"; Flags: uninsdeletekey
+Root: HKCR; Subkey: "rudolph"; ValueType: string; ValueName: "URL Protocol"; ValueData: ""
+Root: HKCR; Subkey: "rudolph\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\{#AppExeName},0"
+Root: HKCR; Subkey: "rudolph\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\{#AppExeName}"" ""%1"""
+
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Abrir Rudolph Tech ahora"; Flags: nowait postinstall skipifsilent
 

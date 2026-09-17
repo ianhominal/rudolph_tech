@@ -20,6 +20,14 @@ public sealed class TrayApplicationContext : ApplicationContext
     /// <summary> How often the schedule is looked at. The decision itself lives in ScheduleDecider. </summary>
     private static readonly TimeSpan TickInterval = TimeSpan.FromSeconds(30);
 
+    /// <summary>
+    /// How often the web app is told this program is still open. Everything that changes what it would
+    /// say (starting up, a run beginning or ending, pausing) reports itself right away, so this is only
+    /// the keepalive that keeps the web from calling the program closed. The web gives it six minutes
+    /// of silence before it does (web/src/lib/agent-presence.ts), which is room for two lost ones.
+    /// </summary>
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromMinutes(2);
+
     private readonly NotifyIcon _tray;
     private readonly System.Windows.Forms.Timer _timer;
     private readonly AgentService _agent;
@@ -32,6 +40,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     private readonly RegisteredWaitHandle _exitWait;
 
     private SettingsWindow? _window;
+    private DateTimeOffset? _lastHeartbeat;
+    private bool _heartbeatFailing;
 
     public TrayApplicationContext()
     {
@@ -87,6 +97,8 @@ public sealed class TrayApplicationContext : ApplicationContext
             executeOnlyOnce: true);
 
         _log.Write("Rudolph Tech arrancó.");
+        // Before anything else: the web app has no other way of finding out this PC came back.
+        SendHeartbeat();
         if (!_settings.IsConfigured) BeginInvokeFirstRun();
     }
 
@@ -121,21 +133,53 @@ public sealed class TrayApplicationContext : ApplicationContext
         starter.Start();
     }
 
+    /// <summary> Everything the schedule depends on, read at this instant. </summary>
+    private ScheduleInputs CurrentScheduleInputs(DateTimeOffset now) => new()
+    {
+        Now = now,
+        PendingIntervalMinutes = _settings.PendingIntervalMinutes,
+        DailyTime = _settings.DailyTime,
+        Paused = _settings.Paused,
+        Configured = _settings.IsConfigured,
+        IsRunning = _agent.IsRunning,
+        LastPendingRun = _settings.LastPendingRun,
+        LastDailyRun = _settings.LastDailyRun,
+        DailyEnabled = _settings.DailyEnabled,
+        PendingEnabled = _settings.PendingEnabled,
+    };
+
+    /// <summary>
+    /// Reports to the web app, without ever getting in the way: it is started and forgotten, and a
+    /// failure is only worth one line in the log the first time it happens. A survey running for
+    /// twenty minutes must keep being reported, which is why this is not tied to the schedule.
+    /// </summary>
+    private async void SendHeartbeat()
+    {
+        var now = DateTimeOffset.Now;
+        _lastHeartbeat = now;
+        try
+        {
+            var sent = await _agent.SendHeartbeatAsync(ScheduleDecider.NextRunAt(CurrentScheduleInputs(now)), now, CancellationToken.None);
+            if (sent == _heartbeatFailing)
+            {
+                // Only the change is worth saying: this fires every couple of minutes all day.
+                _heartbeatFailing = !sent;
+                if (!sent) _log.Write("No se pudo avisarle a la web que el programa está abierto. Se reintenta solo.");
+                else _log.Write("Se restableció el aviso a la web.");
+            }
+        }
+        catch (Exception exception)
+        {
+            _log.Write($"El aviso a la web falló: {exception.Message}");
+        }
+    }
+
     private async void OnTick(object? sender, EventArgs e)
     {
-        var action = ScheduleDecider.Decide(new ScheduleInputs
-        {
-            Now = DateTimeOffset.Now,
-            PendingIntervalMinutes = _settings.PendingIntervalMinutes,
-            DailyTime = _settings.DailyTime,
-            Paused = _settings.Paused,
-            Configured = _settings.IsConfigured,
-            IsRunning = _agent.IsRunning,
-            LastPendingRun = _settings.LastPendingRun,
-            LastDailyRun = _settings.LastDailyRun,
-            DailyEnabled = _settings.DailyEnabled,
-            PendingEnabled = _settings.PendingEnabled,
-        });
+        var now = DateTimeOffset.Now;
+        if (_lastHeartbeat is not { } last || now - last >= HeartbeatInterval) SendHeartbeat();
+
+        var action = ScheduleDecider.Decide(CurrentScheduleInputs(now));
 
         if (action == ScheduledAction.None) return;
 
@@ -161,6 +205,9 @@ public sealed class TrayApplicationContext : ApplicationContext
             _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, running);
             _runItem.Enabled = !running;
             _runItem.Text = running ? "Relevando" : "Relevar ahora";
+            // A run starting or ending changes both halves of what the web shows, so it says so now
+            // rather than up to two minutes later.
+            SendHeartbeat();
         });
     }
 
@@ -250,6 +297,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _agent.SaveSettings();
         _pauseItem.Text = _settings.Paused ? "Reanudar" : "Pausar";
         _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning);
+        SendHeartbeat();
         _log.Write(_settings.Paused ? "Relevamientos en pausa." : "Relevamientos reanudados.");
         _tray.ShowBalloonTip(
             4000,
