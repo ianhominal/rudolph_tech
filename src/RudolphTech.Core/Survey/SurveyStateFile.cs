@@ -32,7 +32,8 @@ public sealed class SurveyState
     public int Pid { get; init; }
     public IReadOnlyList<string> ProductIds { get; init; } = [];
     public int Done { get; init; }
-    public string? Current { get; init; }
+    /// <summary> Name of the product being surveyed right now, or null between products and once the run ends. </summary>
+    public string? CurrentProductName { get; init; }
     public string? Message { get; init; }
     public IReadOnlyList<SurveyResult> Results { get; init; } = [];
 
@@ -78,7 +79,7 @@ public static class SurveyStateFile
                 Pid = root.TryGetProperty("pid", out var pid) && pid.TryGetInt32(out var pidValue) ? pidValue : 0,
                 ProductIds = ReadStringArray(root, "productIds"),
                 Done = root.TryGetProperty("done", out var done) && done.TryGetInt32(out var doneValue) ? doneValue : 0,
-                Current = ReadString(root, "current"),
+                CurrentProductName = ReadCurrentName(root),
                 Message = ReadString(root, "message"),
                 Results = results,
                 TotalListings = results.Sum(result => result.Count),
@@ -120,6 +121,17 @@ public static class SurveyStateFile
         return items;
     }
 
+    /// <summary>
+    /// The name of the product being surveyed right now, or null between products and once the run ends.
+    /// `current` is an object, `{ id, name }`, not a string: reading it as one left this silently null
+    /// even in the middle of a run.
+    /// </summary>
+    private static string? ReadCurrentName(JsonElement root)
+    {
+        if (!root.TryGetProperty("current", out var current) || current.ValueKind != JsonValueKind.Object) return null;
+        return ReadString(current, "name");
+    }
+
     private static List<SurveyResult> ReadResults(JsonElement root)
     {
         var results = new List<SurveyResult>();
@@ -129,9 +141,14 @@ public static class SurveyStateFile
             if (item.ValueKind != JsonValueKind.Object) continue;
             results.Add(new SurveyResult
             {
-                ProductId = ReadString(item, "productId") ?? "",
+                // "id" and "listings", the names the script actually writes. This read "productId" and
+                // "count" until 17 September 2026, names no file has ever carried, so every result came
+                // back with an empty id and a count of zero and the tray announced "Se relevaron 0
+                // publicaciones" after a run that read 222. The tests agreed because they invented the
+                // same names; see SurveyStateFileTests.
+                ProductId = ReadString(item, "id") ?? "",
                 Ok = item.TryGetProperty("ok", out var ok) && ok.ValueKind == JsonValueKind.True,
-                Count = item.TryGetProperty("count", out var count) && count.TryGetInt32(out var countValue) ? countValue : 0,
+                Count = item.TryGetProperty("listings", out var listings) && listings.TryGetInt32(out var count) ? count : 0,
             });
         }
         return results;
