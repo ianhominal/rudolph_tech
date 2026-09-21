@@ -48,19 +48,88 @@ public static class StatusText
         return $"{Describe(summary.Kind)} del {summary.StartedAt.ToString(DateAndTime)} a las {finished}: {what}.";
     }
 
-    public static string Schedule(AppSettings settings, bool paused)
+    /// <summary>
+    /// Shown in the Pausar/Reanudar balloon when unpausing. A hold in effect (BB-2) means the plain
+    /// "cada N minutos" claim is false until it lifts (found in the independent review of A1: it kept
+    /// saying that through an active hold), so it gets replaced with the same resume clause the blocked
+    /// balloon uses (T3/T5) rather than inventing a new sentence for a case the texts table never named.
+    ///
+    /// resumesAt is the effective next automatic run (AgentService.NextRunAt, i.e.
+    /// ScheduleDecider.NextRunAt, computed by the caller so this stays a pure formatter): the raw
+    /// settings.BlockedUntil alone can name a time later than what will really happen, because BB-4
+    /// makes the daily survey immune to a hold (H-1, found in the second independent review: a hold
+    /// that outlasted the next daily time still claimed "se reanudan" at the hold's own end, while the
+    /// daily survey ran, unheld, before it). Still gated on settings.BlockedUntil, which only answers
+    /// whether a hold exists at all; resumesAt only replaces the number named once that gate already
+    /// says yes.
+    ///
+    /// A null resumesAt (fix pass 2, item 3, low) means the caller's own NextRunAt found nothing
+    /// automatic scheduled at all (reproduced with both the daily survey and the pending check switched
+    /// off while a hold from before still lingers): the raw settings.BlockedUntil is then not proof
+    /// anything will actually resume, so this falls through to the plain cadence sentence below instead
+    /// of naming the raw hold's time, same reasoning as RunOutcome.BlockedMessage dropping its clause on
+    /// a null resumesAt.
+    /// </summary>
+    public static string Schedule(AppSettings settings, bool paused, DateTimeOffset now, DateTimeOffset? resumesAt)
     {
         if (paused) return "Todo en pausa. Ningún relevamiento automático va a arrancar.";
+        if (settings.BlockedUntil is { } until && until > now && resumesAt is { } at) return $"Los relevamientos automáticos se reanudan {ResumeAt(at, now)}.";
         return $"Atiende pedidos cada {settings.PendingIntervalMinutes} minutos y releva todo a las {settings.DailyTime.ToString(Time)}.";
     }
 
-    /// <summary> Windows truncates a notify icon tooltip past 63 characters, so this stays short on purpose. </summary>
-    public static string TrayTooltip(AppSettings settings, bool paused, bool running)
+    /// <summary>
+    /// Windows truncates a notify icon tooltip past 63 characters, so every branch stays short on
+    /// purpose (checked in StatusTextTests). Order matters: waiting is a live sub-state of running and
+    /// has to win over it; paused wins over a hold, because pausing is a person's own deliberate choice
+    /// and a stale hold underneath it is not news.
+    ///
+    /// resumesAt: see Schedule's own doc comment, same contract and same reason (H-1, and fix pass 2's
+    /// null case, item 3, low). Its horizon safety is also why the held branch below needs no separate
+    /// MaximumHoldHorizon check of its own (M-2, found in the same review): resumesAt comes from
+    /// ScheduleDecider.NextRunAt, whose pending leg already ignores a settings.BlockedUntil farther out
+    /// than that horizon and falls back to the ordinary cadence (pinned in ScheduleDeciderTests), so a
+    /// corrupted far-future BlockedUntil can still pass the gate below but can never make this branch
+    /// name a bogus far date. A null resumesAt means no automatic run is scheduled at all, so the held
+    /// branch is skipped entirely rather than naming the raw hold's time.
+    /// </summary>
+    public static string TrayTooltip(AppSettings settings, bool paused, bool running, DateTimeOffset now, DateTimeOffset? resumesAt, bool waiting = false)
     {
+        if (waiting) return "Rudolph Tech: hay que verificar en la ventana de Chrome";
         if (running) return "Rudolph Tech: relevando ahora";
         if (paused) return "Rudolph Tech: en pausa";
+        if (settings.BlockedUntil is { } until && until > now && resumesAt is { } at)
+        {
+            var held = $"Rudolph Tech: sin relevar hasta {HoldClause(at, now)}";
+            return held.Length <= 63 ? held : held[..63];
+        }
         var text = $"Rudolph Tech: diario {settings.DailyTime.ToString(Time)}, pedidos {settings.PendingIntervalMinutes} min";
         return text.Length <= 63 ? text : text[..63];
+    }
+
+    /// <summary> "a las 16:40", "mañana a las 06:45", or "el 24/09 a las 06:45". Used by the blocked balloon (T3, T5) and, in its short form (see HoldClause), by the tray tooltip (T4). </summary>
+    public static string ResumeAt(DateTimeOffset until, DateTimeOffset now) => RelativeDay(until, now) switch
+    {
+        DayRelation.Today => $"a las {until.ToString(Time)}",
+        DayRelation.Tomorrow => $"mañana a las {until.ToString(Time)}",
+        _ => $"el {until:dd/MM} a las {until.ToString(Time)}",
+    };
+
+    /// <summary> The tooltip's shorter phrasing after "sin relevar hasta ": "las 16:40", "mañana 06:45", or "el 24/09 06:45". </summary>
+    private static string HoldClause(DateTimeOffset until, DateTimeOffset now) => RelativeDay(until, now) switch
+    {
+        DayRelation.Today => $"las {until.ToString(Time)}",
+        DayRelation.Tomorrow => $"mañana {until.ToString(Time)}",
+        _ => $"el {until:dd/MM} {until.ToString(Time)}",
+    };
+
+    private enum DayRelation { Today, Tomorrow, Later }
+
+    private static DayRelation RelativeDay(DateTimeOffset until, DateTimeOffset now)
+    {
+        var untilDay = DateOnly.FromDateTime(until.Date);
+        var today = DateOnly.FromDateTime(now.Date);
+        if (untilDay == today) return DayRelation.Today;
+        return untilDay == today.AddDays(1) ? DayRelation.Tomorrow : DayRelation.Later;
     }
 
     private static string Describe(SurveyRunKind kind) => kind switch

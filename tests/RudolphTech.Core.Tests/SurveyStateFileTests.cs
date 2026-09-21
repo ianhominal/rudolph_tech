@@ -131,6 +131,71 @@ public class SurveyStateFileTests
         Assert.Equal(SurveyStatus.Unknown, state!.Status);
     }
 
+    [Fact]
+    public void ReadsAWaitingForVerificationRun()
+    {
+        // waiting-verification is new (TO-2): a person has to answer Mercado Libre's challenge on the
+        // office PC before the run can continue. waitingSince/waitingUntil only exist while this status
+        // does.
+        var state = SurveyStateFile.Parse("""
+        {
+          "status": "waiting-verification",
+          "startedAt": "2026-09-13T09:45:00.000Z",
+          "done": 1,
+          "productIds": ["p1"],
+          "results": [],
+          "waitingSince": "2026-09-21T17:25:00.402Z",
+          "waitingUntil": "2026-09-21T17:35:00.402Z"
+        }
+        """);
+
+        Assert.Equal(SurveyStatus.WaitingVerification, state!.Status);
+        Assert.Equal(new DateTimeOffset(2026, 9, 21, 17, 25, 0, 402, TimeSpan.Zero), state.WaitingSince);
+        Assert.Equal(new DateTimeOffset(2026, 9, 21, 17, 35, 0, 402, TimeSpan.Zero), state.WaitingUntil);
+    }
+
+    [Fact]
+    public void AnInventedStatusStillMapsToUnknownNowThatWaitingVerificationExists()
+    {
+        // SC-7, the compatibility pin: adding a real new status must not turn "the parser only knows
+        // finitely many strings" into "the parser throws on the next one nobody has invented yet".
+        var state = SurveyStateFile.Parse("""{ "status": "algo-que-ni-siquiera-existe-todavia", "done": 0, "productIds": [], "results": [] }""");
+
+        Assert.Equal(SurveyStatus.Unknown, state!.Status);
+    }
+
+    [Fact]
+    public void ReadsTheBlockedReason()
+    {
+        var state = SurveyStateFile.Parse("""
+        { "status": "blocked", "startedAt": "2026-09-13T09:45:00.000Z", "done": 1, "productIds": ["p1"],
+          "results": [], "blockedReason": "verification-timeout" }
+        """);
+
+        Assert.Equal("verification-timeout", state!.BlockedReason);
+    }
+
+    [Fact]
+    public void TheNewFieldsAreNullWhenAnOlderScriptNeverSendsThem()
+    {
+        var state = SurveyStateFile.Parse(FinishedJson);
+
+        Assert.Null(state!.WaitingSince);
+        Assert.Null(state.WaitingUntil);
+        Assert.Null(state.BlockedReason);
+    }
+
+    [Fact]
+    public void AMalformedWaitingUntilGivesNullRatherThanThrowing()
+    {
+        var state = SurveyStateFile.Parse("""
+        { "status": "waiting-verification", "done": 0, "productIds": [], "results": [], "waitingUntil": "no es una fecha" }
+        """);
+
+        Assert.NotNull(state);
+        Assert.Null(state!.WaitingUntil);
+    }
+
     [Theory]
     [InlineData("")]
     [InlineData("   ")]

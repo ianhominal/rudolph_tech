@@ -70,11 +70,12 @@ public sealed class TrayApplicationContext : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(new ToolStripMenuItem("Salir", null, (_, _) => ExitApplication()));
 
+        var startupNow = DateTimeOffset.Now;
         _tray = new NotifyIcon
         {
             Icon = LoadIcon(),
             Visible = true,
-            Text = StatusText.TrayTooltip(_settings, _settings.Paused, running: false),
+            Text = StatusText.TrayTooltip(_settings, _settings.Paused, running: false, startupNow, _agent.NextRunAt(startupNow)),
             ContextMenuStrip = menu,
         };
         _tray.DoubleClick += (_, _) => OpenSettings();
@@ -195,7 +196,8 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         RunOnUiThread(() =>
         {
-            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, running);
+            var now = DateTimeOffset.Now;
+            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, running, now, _agent.NextRunAt(now));
             _runItem.Enabled = !running;
             _runItem.Text = running ? "Relevando" : "Relevar ahora";
             // A run starting or ending changes both halves of what the web shows, so it says so now
@@ -259,7 +261,8 @@ public sealed class TrayApplicationContext : ApplicationContext
         _window.Closed += (_, _) =>
         {
             _window = null;
-            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning);
+            var now = DateTimeOffset.Now;
+            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning, now, _agent.NextRunAt(now));
             _pauseItem.Text = _settings.Paused ? "Reanudar" : "Pausar";
         };
         _window.Show();
@@ -289,13 +292,15 @@ public sealed class TrayApplicationContext : ApplicationContext
         _settings.Paused = !_settings.Paused;
         _agent.SaveSettings();
         _pauseItem.Text = _settings.Paused ? "Reanudar" : "Pausar";
-        _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning);
+        var now = DateTimeOffset.Now;
+        var resumesAt = _agent.NextRunAt(now);
+        _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning, now, resumesAt);
         SendHeartbeat();
         _log.Write(_settings.Paused ? "Relevamientos en pausa." : "Relevamientos reanudados.");
         _tray.ShowBalloonTip(
             4000,
             "Rudolph Tech",
-            _settings.Paused ? "No va a arrancar ningún relevamiento automático." : StatusText.Schedule(_settings, paused: false),
+            _settings.Paused ? "No va a arrancar ningún relevamiento automático." : StatusText.Schedule(_settings, paused: false, now, resumesAt),
             ToolTipIcon.Info);
     }
 
