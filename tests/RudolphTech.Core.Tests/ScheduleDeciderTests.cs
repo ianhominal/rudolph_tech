@@ -454,13 +454,41 @@ public class ScheduleDeciderTests
     public void NextRunAtReturnsTheDailyTimeWhenTheHoldRunsPastIt()
     {
         // A third-or-later wall's hold points past tomorrow's daily survey; the daily still wins,
-        // because the daily is never held.
+        // because the daily is never held. Thirty hours, not an arbitrary larger value: far enough
+        // past tomorrow's 06:45 to prove the point, comfortably inside MaximumHoldHorizon so this test
+        // is about that rule, not tripped by it.
         var inputs = Inputs(
             lastPendingRun: Monday9Am,
             lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
-            blockedUntil: Monday9Am.AddDays(2));
+            blockedUntil: Monday9Am.AddHours(30));
 
         Assert.Equal(new DateTimeOffset(2026, 9, 15, 6, 45, 0, TimeSpan.FromHours(-3)), ScheduleDecider.NextRunAt(inputs));
+    }
+
+    [Fact]
+    public void ABlockedUntilFartherOutThanTheMaximumHoldHorizonIsNotTrusted()
+    {
+        // A clock that went backwards, or a settings.json copied from a machine running ahead, must
+        // not freeze every automatic run forever with nothing in the log and no way out short of hand
+        // editing the file.
+        var inputs = Inputs(
+            lastPendingRun: Monday9Am.AddMinutes(-15),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.Add(ScheduleDecider.MaximumHoldHorizon).AddHours(1));
+
+        Assert.Equal(ScheduledAction.Pending, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void NextRunAtIgnoresABlockedUntilFartherOutThanTheMaximumHoldHorizon()
+    {
+        var inputs = Inputs(
+            intervalMinutes: 5,
+            lastPendingRun: Monday9Am.AddMinutes(-2),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.Add(ScheduleDecider.MaximumHoldHorizon).AddHours(1));
+
+        Assert.Equal(Monday9Am.AddMinutes(3), ScheduleDecider.NextRunAt(inputs));
     }
 
     [Fact]
