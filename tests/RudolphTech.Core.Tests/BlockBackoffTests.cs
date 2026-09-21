@@ -50,6 +50,32 @@ public class BlockBackoffTests
     }
 
     [Fact]
+    public void TheThirdOrLaterHoldIsNeverShorterThanTheSecondHold()
+    {
+        // A third wall at 03:00 with a 06:45 daily would otherwise resolve to 3h45, shorter than the
+        // six hours the second wall gets; escalation must never hand back a shorter wait than the wall
+        // before it got.
+        var now = new DateTimeOffset(2026, 9, 21, 3, 0, 0, TimeSpan.FromHours(-3));
+
+        var hold = BlockBackoff.AfterWall(now, streak: 2, streakDay: new DateOnly(2026, 9, 21), DailyTime);
+
+        Assert.Equal(now + BlockBackoff.SecondHold, hold.Until);
+        Assert.Equal(3, hold.Streak);
+    }
+
+    [Fact]
+    public void TheThirdOrLaterHoldStaysAtLeastSixHoursEvenSecondsBeforeTheDaily()
+    {
+        // At 06:44:30, thirty seconds from the 06:45 daily, the next-daily branch alone would resolve
+        // to a thirty second hold.
+        var now = new DateTimeOffset(2026, 9, 21, 6, 44, 30, TimeSpan.FromHours(-3));
+
+        var hold = BlockBackoff.AfterWall(now, streak: 2, streakDay: new DateOnly(2026, 9, 21), DailyTime);
+
+        Assert.Equal(now + BlockBackoff.SecondHold, hold.Until);
+    }
+
+    [Fact]
     public void AWallOnANewDayResetsTheStreakToOne()
     {
         var now = new DateTimeOffset(2026, 9, 22, 8, 0, 0, TimeSpan.FromHours(-3));

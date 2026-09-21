@@ -48,9 +48,23 @@ public static class BlockBackoff
         {
             1 => now + FirstHold,
             2 => now + SecondHold,
-            _ => NextDailyAfter(now, dailyTime),
+            _ => ThirdOrLaterHold(now, dailyTime),
         };
         return new Hold(until, count, today);
+    }
+
+    /// <summary>
+    /// The third-or-later hold: whichever is later of the next daily survey and a plain second hold
+    /// counted from now. The next daily survey alone can be a shorter wait than the second hold when
+    /// the wall lands not long before it (a third wall at 03:00 with a 06:45 daily is 3h45, seconds
+    /// before it is under a minute), and escalation must never hand back a shorter wait than the wall
+    /// before it got.
+    /// </summary>
+    private static DateTimeOffset ThirdOrLaterHold(DateTimeOffset now, TimeOnly dailyTime)
+    {
+        var untilDaily = NextDailyAfter(now, dailyTime);
+        var untilSecondHold = now + SecondHold;
+        return untilDaily > untilSecondHold ? untilDaily : untilSecondHold;
     }
 
     /// <summary> The next occurrence of dailyTime strictly after now: today if still ahead of it, tomorrow once past it. </summary>
