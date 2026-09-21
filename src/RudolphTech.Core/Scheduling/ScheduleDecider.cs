@@ -31,6 +31,9 @@ public sealed class ScheduleInputs
 
     /// <summary> Off means the pending check never starts on its own, whatever the clock says. </summary>
     public bool PendingEnabled { get; init; } = true;
+
+    /// <summary> Set by <see cref="Scheduling.BlockBackoff"/> after a verification wall. Gates the pending check only: the daily survey is never held. </summary>
+    public DateTimeOffset? BlockedUntil { get; init; }
 }
 
 /// <summary>
@@ -53,9 +56,13 @@ public static class ScheduleDecider
     {
         if (inputs.IsRunning || inputs.Paused || !inputs.Configured) return ScheduledAction.None;
         if (IsDailyDue(inputs)) return ScheduledAction.Daily;
+        if (IsHeld(inputs)) return ScheduledAction.None;
         if (IsPendingDue(inputs)) return ScheduledAction.Pending;
         return ScheduledAction.None;
     }
+
+    /// <summary> Checked ahead of the pending check but below the daily one: a wall never holds the daily survey. </summary>
+    private static bool IsHeld(ScheduleInputs inputs) => inputs.BlockedUntil is { } until && inputs.Now < until;
 
     private static bool IsDailyDue(ScheduleInputs inputs)
     {
@@ -109,10 +116,16 @@ public static class ScheduleDecider
         return daily < pending ? daily : pending;
     }
 
-    private static DateTimeOffset NextPendingAt(ScheduleInputs inputs) =>
-        inputs.LastPendingRun is { } last
+    private static DateTimeOffset NextPendingAt(ScheduleInputs inputs)
+    {
+        var normal = inputs.LastPendingRun is { } last
             ? last + TimeSpan.FromMinutes(EffectiveIntervalMinutes(inputs))
             : inputs.Now;
+
+        // A hold that runs past the normal interval wins; LastPendingRun keeps being stamped (TO-3),
+        // so the normal computation alone would let the interval quietly outrun the hold.
+        return inputs.BlockedUntil is { } until && until > normal ? until : normal;
+    }
 
     private static DateTimeOffset NextDailyAt(ScheduleInputs inputs)
     {
