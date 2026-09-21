@@ -349,7 +349,7 @@ public sealed class AgentService : IDisposable
         // not touch BlockBackoff's own hold: Remember below still gates on the same stateIsFromThisRun,
         // so a stale read never re-escalates it either way.
         var effectiveState = stateIsFromThisRun ? state : null;
-        var outcome = RunOutcome.From(kind, exitCode, effectiveState, ResumesAt(exitCode, effectiveState, stateIsFromThisRun, now));
+        var outcome = RunOutcome.From(kind, exitCode, effectiveState, ResumesAt(exitCode, effectiveState, stateIsFromThisRun, now), now);
 
         _log.Write($"Fin del relevamiento (código {exitCode}): {outcome.Message}");
         return (outcome, stateIsFromThisRun, now);
@@ -379,7 +379,17 @@ public sealed class AgentService : IDisposable
 
     private void Remember(SurveyRunKind kind, DateTimeOffset started, DateTimeOffset finished, RunOutcome outcome, bool stateIsFromThisRun)
     {
-        Settings.LastRun = RunSummary.From(kind, started, finished, outcome);
+        // A no-op automatic tick (ShouldNotify false, i.e. an automatic Pending run that found nothing
+        // to do) must not overwrite the settings window's last real run with "sin novedades" (H-2,
+        // found in the second independent review): before this fix, every ordinary silent tick five
+        // minutes after a real run replaced its counts with a false "0 producto(s)". The schedule still
+        // has to move on regardless of this gate, so LastPendingRun/LastDailyRun and the backoff hold
+        // below are not gated by it, only what the settings window shows is. Pinned at the RunOutcome
+        // level (this method has no test harness of its own, see RunSurveyCoreAsync's own note) by
+        // RunOutcomeTests.ARealRunsCountsSurviveAFollowingSilentPendingTick, which mirrors this exact
+        // gate line for line.
+        if (outcome.ShouldNotify) Settings.LastRun = RunSummary.From(kind, started, finished, outcome);
+
         if (kind == SurveyRunKind.Pending) Settings.LastPendingRun = finished;
         if (kind == SurveyRunKind.Daily) Settings.LastDailyRun = DateOnly.FromDateTime(started.Date);
 

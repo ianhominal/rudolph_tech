@@ -48,20 +48,30 @@ public sealed class RunOutcome
 
     private RunOutcome(bool notifyOnNothing) => _notifyOnNothing = notifyOnNothing;
 
-    public static RunOutcome From(SurveyRunKind kind, int exitCode, SurveyState? state, DateTimeOffset? resumesAt = null)
+    public static RunOutcome From(SurveyRunKind kind, int exitCode, SurveyState? state, DateTimeOffset? resumesAt = null, DateTimeOffset? now = null)
     {
         var products = state?.Done ?? 0;
         var listings = state?.TotalListings ?? 0;
         var manual = kind != SurveyRunKind.Pending;
+        var at = now ?? DateTimeOffset.Now;
 
-        var resolved = Resolve(exitCode, state);
+        // The script exits 0 without ever writing the state file on exactly one path:
+        // "--pending, nothing due" (web/scripts/meli-survey.mjs), meaning no pending request was
+        // waiting to be served. Resolve alone cannot make this call, since it never sees kind; reading
+        // this triple as Finished (the exit-code fallback inside Resolve) used to overwrite
+        // Settings.LastRun's real counts with a false "Se relevaron 0 publicaciones de 0 producto(s)."
+        // on every ordinary silent tick, not only after a wall (H-2, found in the second independent
+        // review).
+        var resolved = kind == SurveyRunKind.Pending && exitCode == 0 && state is null
+            ? RunOutcomeKind.Nothing
+            : Resolve(exitCode, state);
         return resolved switch
         {
             RunOutcomeKind.Blocked => new RunOutcome(manual)
             {
                 Kind = RunOutcomeKind.Blocked,
                 Title = "Relevamiento detenido",
-                Message = BlockedMessage(state?.BlockedReason, resumesAt),
+                Message = BlockedMessage(state?.BlockedReason, resumesAt, at),
                 Products = products,
                 Listings = listings,
             },
@@ -137,8 +147,15 @@ public sealed class RunOutcome
     /// older script never sends one), falls back to a sentence that is still true whatever wrote the
     /// state. resumesAt null, meaning nobody has a hold to name yet, drops the resume clause entirely:
     /// a surface that does not know the retry time must not invent one.
+    ///
+    /// now is passed in rather than read here (M-1, found in the second independent review): reading
+    /// DateTimeOffset.Now directly made AResumesAtTomorrowNamesTomorrowInTheMessage flake between 22:00
+    /// and 23:59 local (the phrasing depends on comparing resumesAt's day to today's), and its sibling
+    /// test flake in the one millisecond window at midnight. From's own caller (AgentService) already
+    /// holds a single now for the whole run (L-2), so this stays exact instead of reading the clock a
+    /// second time.
     /// </summary>
-    private static string BlockedMessage(string? reason, DateTimeOffset? resumesAt)
+    private static string BlockedMessage(string? reason, DateTimeOffset? resumesAt, DateTimeOffset now)
     {
         var body = reason switch
         {
@@ -150,7 +167,7 @@ public sealed class RunOutcome
                 "Mercado Libre pidió una verificación y el relevamiento se detuvo.",
         };
         return resumesAt is { } until
-            ? $"{body} Los relevamientos automáticos se reanudan {StatusText.ResumeAt(until, DateTimeOffset.Now)}."
+            ? $"{body} Los relevamientos automáticos se reanudan {StatusText.ResumeAt(until, now)}."
             : body;
     }
 }
