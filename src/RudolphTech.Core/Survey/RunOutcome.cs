@@ -157,6 +157,12 @@ public sealed class RunOutcome
     /// </summary>
     private static string BlockedMessage(string? reason, DateTimeOffset? resumesAt, DateTimeOffset now)
     {
+        // L-4: reason is SurveyState.BlockedReason, a field the script does not write yet (that is
+        // slice B2's job, per the proposal's slice table); nothing in this repo enforces these four
+        // spellings today, so the two repos can only stay in step by both reading this exact list.
+        // Whoever implements B2 must emit exactly one of "verification-no-window",
+        // "verification-timeout", "verification-cap" or "verification-window-closed", or omit the
+        // field entirely (the null/unrecognised branch below is what an old script still gets).
         var body = reason switch
         {
             "verification-no-window" =>
