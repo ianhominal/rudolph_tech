@@ -149,6 +149,24 @@ public class BlockBackoffTests
     }
 
     [Fact]
+    public void NextEscalatesFromTheCurrentHoldsOwnStreakAndDayNotAHardcodedZero()
+    {
+        // The Blocked arm forwards current.Streak and current.Day into AfterWall. Swapping them for a
+        // hardcoded 0/null is a plausible refactor slip that NextEscalatesTheHoldExactlyLikeAfterWall-
+        // WhenTheStateIsFresh above cannot catch: it starts from an already empty Hold, where 0/null
+        // and current.Streak/current.Day are the same value either way. This one starts from a hold
+        // already mid streak, so only the real fields, not a hardcoded reset, produce the right answer.
+        var now = new DateTimeOffset(2026, 9, 21, 14, 25, 0, TimeSpan.FromHours(-3));
+        var today = DateOnly.FromDateTime(now.Date);
+        var current = new BlockBackoff.Hold(now.AddHours(-1), 1, today);
+
+        var next = BlockBackoff.Next(current, RunOutcomeKind.Blocked, stateIsFromThisRun: true, now, DailyTime);
+
+        Assert.Equal(2, next.Streak);
+        Assert.Equal(now + BlockBackoff.SecondHold, next.Until);
+    }
+
+    [Fact]
     public void NextClearsAnActiveHoldWhenTheStateIsFreshAndFinished()
     {
         var now = new DateTimeOffset(2026, 9, 21, 14, 25, 0, TimeSpan.FromHours(-3));
@@ -162,34 +180,44 @@ public class BlockBackoffTests
     }
 
     [Theory]
-    [InlineData(RunOutcomeKind.Nothing)]
-    [InlineData(RunOutcomeKind.Interrupted)]
-    [InlineData(RunOutcomeKind.Error)]
-    public void NextLeavesTheHoldAloneWhenAFreshOutcomeProvesNothingEitherWay(RunOutcomeKind outcomeKind)
+    [InlineData(RunOutcomeKind.Blocked)]
+    [InlineData(RunOutcomeKind.Finished)]
+    public void NextLeavesTheHoldAloneWheneverTheStateIsStaleWhateverTheOutcomeSays(RunOutcomeKind outcomeKind)
     {
+        // H1: meli-survey.mjs's "--pending, nothing due" path exits 0 without writing the state file,
+        // so a state left over from an earlier run can be read as any outcome kind while proving
+        // nothing about this one. Only Blocked and Finished belong in this theory: they are the two
+        // outcomes Next would otherwise escalate or clear via AfterWall/Cleared, so a weakened or
+        // removed freshness guard could only be caught by one of them. Nothing, Interrupted and Error
+        // fall through to the same "_ => current" arm with or without a freshness guard at all, so
+        // they used to sit here as three decorative rows that would pass either way; they are pinned
+        // for real, alongside their fresh counterparts, in
+        // NextLeavesTheHoldAloneForOutcomesThatNeverChangeAnythingRegardlessOfFreshness below.
         var now = new DateTimeOffset(2026, 9, 21, 14, 25, 0, TimeSpan.FromHours(-3));
         var current = new BlockBackoff.Hold(now.AddHours(2), 1, DateOnly.FromDateTime(now.Date));
 
-        var next = BlockBackoff.Next(current, outcomeKind, stateIsFromThisRun: true, now, DailyTime);
+        var next = BlockBackoff.Next(current, outcomeKind, stateIsFromThisRun: false, now, DailyTime);
 
         Assert.Equal(current, next);
     }
 
     [Theory]
-    [InlineData(RunOutcomeKind.Blocked)]
-    [InlineData(RunOutcomeKind.Finished)]
-    [InlineData(RunOutcomeKind.Nothing)]
-    [InlineData(RunOutcomeKind.Interrupted)]
-    [InlineData(RunOutcomeKind.Error)]
-    public void NextLeavesTheHoldAloneWheneverTheStateIsStaleWhateverTheOutcomeSays(RunOutcomeKind outcomeKind)
+    [InlineData(RunOutcomeKind.Nothing, true)]
+    [InlineData(RunOutcomeKind.Nothing, false)]
+    [InlineData(RunOutcomeKind.Interrupted, true)]
+    [InlineData(RunOutcomeKind.Interrupted, false)]
+    [InlineData(RunOutcomeKind.Error, true)]
+    [InlineData(RunOutcomeKind.Error, false)]
+    public void NextLeavesTheHoldAloneForOutcomesThatNeverChangeAnythingRegardlessOfFreshness(RunOutcomeKind outcomeKind, bool stateIsFromThisRun)
     {
-        // H1: meli-survey.mjs's "--pending, nothing due" path exits 0 without writing the state file,
-        // so a state left over from an earlier run can be read as any outcome kind while proving
-        // nothing about this one. A stale read must be a no-op in every direction, active hold or not.
+        // Nothing, Interrupted and Error hit Next's default switch arm no matter what
+        // stateIsFromThisRun is, so this cannot exercise the freshness guard itself (see the stale
+        // theory above for the two outcomes that can). What it does pin, honestly: none of these three
+        // ever gets special cased on freshness either, fresh and stale side by side for each one.
         var now = new DateTimeOffset(2026, 9, 21, 14, 25, 0, TimeSpan.FromHours(-3));
         var current = new BlockBackoff.Hold(now.AddHours(2), 1, DateOnly.FromDateTime(now.Date));
 
-        var next = BlockBackoff.Next(current, outcomeKind, stateIsFromThisRun: false, now, DailyTime);
+        var next = BlockBackoff.Next(current, outcomeKind, stateIsFromThisRun, now, DailyTime);
 
         Assert.Equal(current, next);
     }
