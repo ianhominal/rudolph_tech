@@ -68,21 +68,50 @@ public class RunOutcomeTests
     [Fact]
     public void ARealRunsCountsSurviveAFollowingSilentPendingTick()
     {
-        // Mirrors AgentService.Remember's own gate (outcome.ShouldNotify): a no-op automatic pending
-        // tick must not overwrite the settings window's last real run with "sin novedades" over real
-        // counts. AgentService itself has no test harness (RudolphTech.Core.Tests never references
-        // RudolphTech.csproj, the WPF project AgentService lives in), so this pins the exact contract
-        // Remember must follow using the same Core types it actually reads and writes
-        // (RunOutcome/RunSummary), simulating Remember's gate line for line.
+        // Mirrors AgentService.Remember's own gate: a no-op automatic pending tick with no state file
+        // of its own (the "--pending, nothing due" path, H-2) must not overwrite the settings window's
+        // last real run with "sin novedades" over real counts. AgentService itself has no test harness
+        // (RudolphTech.Core.Tests never references RudolphTech.csproj, the WPF project AgentService
+        // lives in), so this pins the exact contract Remember must follow using the same Core types it
+        // actually reads and writes (RunOutcome/RunSummary), simulating Remember's gate line for line.
+        // The gate is outcome.Kind != Nothing || stateIsFromThisRun, not outcome.ShouldNotify alone
+        // (fix pass 2, item 2, medium): see AServedPendingRequestThatFoundNoNewListingsStillKeepsItsRecord
+        // just below for the case that tells the two apart.
         var real = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Finished, listings: 18));
         var lastRun = RunSummary.From(SurveyRunKind.Daily, DateTimeOffset.Now, DateTimeOffset.Now, real);
 
         var silentTick = RunOutcome.From(SurveyRunKind.Pending, 0, null);
-        Assert.False(silentTick.ShouldNotify);
-        if (silentTick.ShouldNotify) lastRun = RunSummary.From(SurveyRunKind.Pending, DateTimeOffset.Now, DateTimeOffset.Now, silentTick);
+        const bool stateIsFromThisRun = false;
+        Assert.False(silentTick.Kind != RunOutcomeKind.Nothing || stateIsFromThisRun);
+        if (silentTick.Kind != RunOutcomeKind.Nothing || stateIsFromThisRun)
+            lastRun = RunSummary.From(SurveyRunKind.Pending, DateTimeOffset.Now, DateTimeOffset.Now, silentTick);
 
         Assert.Equal(18, lastRun.Listings);
         Assert.Equal(RunOutcomeKind.Finished, lastRun.Outcome);
+    }
+
+    [Fact]
+    public void AServedPendingRequestThatFoundNoNewListingsStillKeepsItsRecord()
+    {
+        // MEDIUM (fix pass 2, item 2): meli-survey.mjs:1559 can serve a --pending request and write the
+        // state file even when every product already had today's snapshot, exiting 3 (nothing captured
+        // this time, not nothing due). RunOutcome.From/Resolve read that combination as
+        // RunOutcomeKind.Nothing, the same Kind as the completely different "--pending, nothing due"
+        // case (H-2) that never touches the state file at all, so gating Settings.LastRun on
+        // outcome.ShouldNotify alone, as the first fix pass did, dropped the record of a request that
+        // WAS served: a person pressing "Actualizar" on the web for a product already surveyed today
+        // would see the settings window still showing an older run. Mirrors AgentService.Remember's
+        // gate line for line, same reason ARealRunsCountsSurviveAFollowingSilentPendingTick does.
+        var served = RunOutcome.From(SurveyRunKind.Pending, 3, State(SurveyStatus.Finished, listings: 0));
+        Assert.False(served.ShouldNotify);
+
+        RunSummary? lastRun = null;
+        const bool stateIsFromThisRun = true;
+        if (served.Kind != RunOutcomeKind.Nothing || stateIsFromThisRun)
+            lastRun = RunSummary.From(SurveyRunKind.Pending, DateTimeOffset.Now, DateTimeOffset.Now, served);
+
+        Assert.NotNull(lastRun);
+        Assert.Equal(RunOutcomeKind.Nothing, lastRun!.Outcome);
     }
 
     [Fact]

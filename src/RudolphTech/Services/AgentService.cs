@@ -390,16 +390,24 @@ public sealed class AgentService : IDisposable
 
     private void Remember(SurveyRunKind kind, DateTimeOffset started, DateTimeOffset finished, RunOutcome outcome, bool stateIsFromThisRun)
     {
-        // A no-op automatic tick (ShouldNotify false, i.e. an automatic Pending run that found nothing
-        // to do) must not overwrite the settings window's last real run with "sin novedades" (H-2,
-        // found in the second independent review): before this fix, every ordinary silent tick five
-        // minutes after a real run replaced its counts with a false "0 producto(s)". The schedule still
-        // has to move on regardless of this gate, so LastPendingRun/LastDailyRun and the backoff hold
-        // below are not gated by it, only what the settings window shows is. Pinned at the RunOutcome
-        // level (this method has no test harness of its own, see RunSurveyCoreAsync's own note) by
-        // RunOutcomeTests.ARealRunsCountsSurviveAFollowingSilentPendingTick, which mirrors this exact
-        // gate line for line.
-        if (outcome.ShouldNotify) Settings.LastRun = RunSummary.From(kind, started, finished, outcome);
+        // Settings.LastRun must reflect every run that actually produced evidence, not only the ones
+        // worth a balloon (fix pass 2, item 2, medium): outcome.ShouldNotify alone used to gate this
+        // (H-2, first fix pass), which happened to work only because every Pending run that served a
+        // request also notifies, except one: web/scripts/meli-survey.mjs:1559 can serve a --pending
+        // request, write the state file, and still exit 3 (every product already had today's snapshot),
+        // which RunOutcome.From reads as RunOutcomeKind.Nothing, the same Kind as the true "nothing was
+        // even pending" case (H-2) that never touches the state file. Gating on ShouldNotify alone
+        // dropped that served run's own record too, so the settings window kept showing an older run
+        // after a person pressed "Actualizar" on the web for a product already surveyed.
+        // stateIsFromThisRun is exactly the signal that tells the two apart: true only when this run's
+        // own script wrote the state file. The schedule still has to move on regardless of this gate, so
+        // LastPendingRun/LastDailyRun and the backoff hold below are not gated by it, only what the
+        // settings window shows is. Pinned at the RunOutcome level (this method has no test harness of
+        // its own, see RunSurveyCoreAsync's own note) by RunOutcomeTests.
+        // ARealRunsCountsSurviveAFollowingSilentPendingTick (the true nothing-due tick) and
+        // AServedPendingRequestThatFoundNoNewListingsStillKeepsItsRecord (the served-but-empty run),
+        // which mirror this exact gate line for line.
+        if (outcome.Kind != RunOutcomeKind.Nothing || stateIsFromThisRun) Settings.LastRun = RunSummary.From(kind, started, finished, outcome);
 
         if (kind == SurveyRunKind.Pending) Settings.LastPendingRun = finished;
         if (kind == SurveyRunKind.Daily) Settings.LastDailyRun = DateOnly.FromDateTime(started.Date);
