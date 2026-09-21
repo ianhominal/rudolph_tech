@@ -1,3 +1,5 @@
+using RudolphTech.Core.Survey;
+
 namespace RudolphTech.Core.Scheduling;
 
 /// <summary>
@@ -14,6 +16,28 @@ public static class BlockBackoff
 
     /// <summary> No automatic run before <see cref="Until"/>; null means no hold at all. </summary>
     public readonly record struct Hold(DateTimeOffset? Until, int Streak, DateOnly? Day);
+
+    /// <summary>
+    /// What the hold becomes after one run, given only what a caller with no state of its own needs:
+    /// the current hold, what the run's outcome was, and whether that outcome actually came from a
+    /// state file this run wrote. A stale state proves nothing about what just happened (H1: the
+    /// script can exit 0 without touching the state file at all, on the "--pending, nothing due" path),
+    /// so it neither escalates nor clears; <paramref name="current"/> comes back unchanged.
+    /// </summary>
+    public static Hold Next(Hold current, RunOutcomeKind outcomeKind, bool stateIsFromThisRun, DateTimeOffset now, TimeOnly dailyTime)
+    {
+        if (!stateIsFromThisRun) return current;
+
+        return outcomeKind switch
+        {
+            RunOutcomeKind.Blocked => AfterWall(now, current.Streak, current.Day, dailyTime),
+            // Only a run that actually finished proves the block is gone. Nothing (no work found)
+            // proves nothing either way, and neither does Interrupted or Error, so they leave the
+            // hold exactly as it was.
+            RunOutcomeKind.Finished => Cleared(),
+            _ => current,
+        };
+    }
 
     /// <summary> The hold after a wall. Third or later that day: nothing automatic until the next daily survey. </summary>
     public static Hold AfterWall(DateTimeOffset now, int streak, DateOnly? streakDay, TimeOnly dailyTime)

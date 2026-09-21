@@ -224,8 +224,8 @@ public sealed class AgentService : IDisposable
 
         try
         {
-            var outcome = await RunSurveyCoreAsync(kind, linked.Token);
-            Remember(kind, started, outcome);
+            var (outcome, stateIsFromThisRun) = await RunSurveyCoreAsync(kind, started, linked.Token);
+            Remember(kind, started, outcome, stateIsFromThisRun);
             RunFinished?.Invoke(outcome);
             return outcome;
         }
@@ -238,23 +238,31 @@ public sealed class AgentService : IDisposable
         }
     }
 
-    private async Task<RunOutcome> RunSurveyCoreAsync(SurveyRunKind kind, CancellationToken cancellation)
+    /// <summary>
+    /// Runs the script and turns its exit code plus progress file into an outcome. The second value
+    /// says whether that progress file was actually written by this run, not left over from an
+    /// earlier one: the script can exit 0 without ever touching it, on the "--pending, nothing due"
+    /// path, so a leftover file must not be read as fresh evidence of anything (H1). Every early
+    /// return here skips the script entirely, so none of them read a state file at all; false is the
+    /// honest answer for all of them, not just a placeholder.
+    /// </summary>
+    private async Task<(RunOutcome Outcome, bool StateIsFromThisRun)> RunSurveyCoreAsync(SurveyRunKind kind, DateTimeOffset started, CancellationToken cancellation)
     {
         if (!Settings.IsConfigured || Settings.IngestToken is not { } token)
         {
-            return Failure("Falta configurar la aplicación. Abrí la configuración e iniciá sesión.");
+            return (Failure("Falta configurar la aplicación. Abrí la configuración e iniciá sesión."), false);
         }
 
         if (!AgentPackageInstaller.IsInstalled(AppPaths.AgentFolder))
         {
-            return Failure("El agente no está descargado. Abrí la configuración y tocá Actualizar agente.");
+            return (Failure("El agente no está descargado. Abrí la configuración y tocá Actualizar agente."), false);
         }
 
         var dependencies = await EnsureDependenciesAsync(cancellation);
-        if (!dependencies.Success) return Failure(dependencies.Message);
+        if (!dependencies.Success) return (Failure(dependencies.Message), false);
 
         var node = NodeRuntime.Locate();
-        if (!node.Found) return Failure(node.Error);
+        if (!node.Found) return (Failure(node.Error), false);
 
         // Both at once: real environment variables (which meli-lib.mjs layers on top of any file, so
         // they always win) and a .env written for this run only, which is what the script would read
@@ -278,21 +286,28 @@ public sealed class AgentService : IDisposable
         catch (OperationCanceledException)
         {
             _log.Write("El relevamiento se detuvo por pedido del usuario.");
-            return RunOutcome.From(kind, 1, new SurveyState { Status = SurveyStatus.Interrupted });
+            return (RunOutcome.From(kind, 1, new SurveyState { Status = SurveyStatus.Interrupted }), false);
         }
         catch (Exception exception)
         {
             _log.Write($"El relevamiento no pudo arrancar: {exception.Message}");
-            return Failure($"El relevamiento no pudo arrancar: {exception.Message}");
+            return (Failure($"El relevamiento no pudo arrancar: {exception.Message}"), false);
         }
 
         var state = SurveyStateFile.Read(AppPaths.StateFile);
         var outcome = RunOutcome.From(kind, exitCode, state);
+
+        // started is captured before the process is even launched, so a state file this run actually
+        // wrote always carries a startedAt at or after it; a file left over from an earlier run is
+        // always strictly before it. null (no file, or one the script never touched this time) is not
+        // fresh either: there is nothing to prove this run wrote anything.
+        var stateIsFromThisRun = state?.StartedAt is { } stateStarted && stateStarted >= started;
+
         _log.Write($"Fin del relevamiento (código {exitCode}): {outcome.Message}");
-        return outcome;
+        return (outcome, stateIsFromThisRun);
     }
 
-    private void Remember(SurveyRunKind kind, DateTimeOffset started, RunOutcome outcome)
+    private void Remember(SurveyRunKind kind, DateTimeOffset started, RunOutcome outcome, bool stateIsFromThisRun)
     {
         var finished = DateTimeOffset.Now;
         Settings.LastRun = RunSummary.From(kind, started, finished, outcome);
@@ -304,21 +319,17 @@ public sealed class AgentService : IDisposable
         if (kind == SurveyRunKind.Manual) Settings.LastPendingRun = finished;
 
         // Real backoff: a wall holds automatic runs for hours instead of the next 5-15 minute tick
-        // (BB-2..3). "Relevar ahora" needs no check against this at all, because it never consults
-        // ScheduleDecider in the first place (see TrayApplicationContext.StartManualRun): a person
-        // pressing the button is a person who can answer the wall.
-        if (outcome.Kind == RunOutcomeKind.Blocked)
-        {
-            var hold = BlockBackoff.AfterWall(finished, Settings.BlockedStreak, Settings.BlockedStreakDay, Settings.DailyTime);
-            (Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay) = (hold.Until, hold.Streak, hold.Day);
-        }
-        else if (outcome.Kind == RunOutcomeKind.Finished)
-        {
-            // Only a run that actually finished proves the block is gone. Nothing (no work found) proves
-            // nothing either way, and neither does Interrupted or Error, so they leave the hold as it is.
-            var cleared = BlockBackoff.Cleared();
-            (Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay) = (cleared.Until, cleared.Streak, cleared.Day);
-        }
+        // (BB-2..3). BlockBackoff.Next only looks at the outcome and at whether the state behind it is
+        // fresh, never at kind: a walled manual run ("Relevar ahora") escalates the automatic hold
+        // exactly like a walled automatic one would. Deliberate (BB-2's contract has no "except manual"
+        // qualifier): a wall is real evidence Mercado Libre is challenging this PC, whoever triggered
+        // the run that hit it. "Relevar ahora" itself still needs no check against an existing hold,
+        // because it never consults ScheduleDecider in the first place (see
+        // TrayApplicationContext.StartManualRun): a person pressing the button is a person who can
+        // answer the wall.
+        var current = new BlockBackoff.Hold(Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay);
+        var hold = BlockBackoff.Next(current, outcome.Kind, stateIsFromThisRun, finished, Settings.DailyTime);
+        (Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay) = (hold.Until, hold.Streak, hold.Day);
 
         SaveSettings();
     }
