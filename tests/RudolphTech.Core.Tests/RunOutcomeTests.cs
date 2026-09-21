@@ -25,7 +25,7 @@ public class RunOutcomeTests
     [Fact]
     public void AFinishedRunReportsHowManyListingsItRead()
     {
-        var outcome = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Finished, listings: 12));
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Finished, listings: 12), DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Finished, outcome.Kind);
         Assert.Equal(12, outcome.Listings);
@@ -35,7 +35,7 @@ public class RunOutcomeTests
     [Fact]
     public void ABlockedRunSaysMercadoLibreAskedForAVerification()
     {
-        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked));
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked), DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Blocked, outcome.Kind);
         Assert.Contains("verificación", outcome.Message);
@@ -44,7 +44,7 @@ public class RunOutcomeTests
     [Fact]
     public void ExitCodeThreeOnAPendingRunMeansThereWasNothingToDo()
     {
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 3, null);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 3, null, DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Nothing, outcome.Kind);
         Assert.False(outcome.ShouldNotify);
@@ -58,7 +58,7 @@ public class RunOutcomeTests
         // that triple (Pending, exit 0, state null) as Finished, via the plain exit-code fallback,
         // used to claim "Se relevaron 0 publicaciones de 0 producto(s)." on every ordinary silent tick,
         // not only after a wall.
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 0, null);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 0, null, DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Nothing, outcome.Kind);
         Assert.False(outcome.ShouldNotify);
@@ -77,10 +77,10 @@ public class RunOutcomeTests
         // The gate is outcome.Kind != Nothing || stateIsFromThisRun, not outcome.ShouldNotify alone
         // (fix pass 2, item 2, medium): see AServedPendingRequestThatFoundNoNewListingsStillKeepsItsRecord
         // just below for the case that tells the two apart.
-        var real = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Finished, listings: 18));
+        var real = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Finished, listings: 18), DateTimeOffset.Now);
         var lastRun = RunSummary.From(SurveyRunKind.Daily, DateTimeOffset.Now, DateTimeOffset.Now, real);
 
-        var silentTick = RunOutcome.From(SurveyRunKind.Pending, 0, null);
+        var silentTick = RunOutcome.From(SurveyRunKind.Pending, 0, null, DateTimeOffset.Now);
         const bool stateIsFromThisRun = false;
         Assert.False(silentTick.Kind != RunOutcomeKind.Nothing || stateIsFromThisRun);
         if (silentTick.Kind != RunOutcomeKind.Nothing || stateIsFromThisRun)
@@ -102,7 +102,7 @@ public class RunOutcomeTests
         // WAS served: a person pressing "Actualizar" on the web for a product already surveyed today
         // would see the settings window still showing an older run. Mirrors AgentService.Remember's
         // gate line for line, same reason ARealRunsCountsSurviveAFollowingSilentPendingTick does.
-        var served = RunOutcome.From(SurveyRunKind.Pending, 3, State(SurveyStatus.Finished, listings: 0));
+        var served = RunOutcome.From(SurveyRunKind.Pending, 3, State(SurveyStatus.Finished, listings: 0), DateTimeOffset.Now);
         Assert.False(served.ShouldNotify);
 
         RunSummary? lastRun = null;
@@ -117,7 +117,7 @@ public class RunOutcomeTests
     [Fact]
     public void AnErrorExitCodeIsAnError()
     {
-        var outcome = RunOutcome.From(SurveyRunKind.Daily, 1, null);
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 1, null, DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Error, outcome.Kind);
         Assert.True(outcome.ShouldNotify);
@@ -126,7 +126,7 @@ public class RunOutcomeTests
     [Fact]
     public void TheStateFileMessageIsCarriedIntoAnError()
     {
-        var outcome = RunOutcome.From(SurveyRunKind.Daily, 1, State(SurveyStatus.Error, message: "sin conexión"));
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 1, State(SurveyStatus.Error, message: "sin conexión"), DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Error, outcome.Kind);
         Assert.Contains("sin conexión", outcome.Message);
@@ -139,7 +139,7 @@ public class RunOutcomeTests
         // exits 0 without touching the state file, so a state left over from an earlier blocked run
         // can outlive it. RunOutcome.From must still read that file as blocked here; keeping a hold
         // from escalating on a read like this one is a separate concern, see BlockBackoff.Next (H1).
-        var outcome = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Blocked));
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Blocked), DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Blocked, outcome.Kind);
     }
@@ -147,7 +147,7 @@ public class RunOutcomeTests
     [Fact]
     public void AnInterruptedRunIsReportedAsSuch()
     {
-        var outcome = RunOutcome.From(SurveyRunKind.Manual, 1, State(SurveyStatus.Interrupted));
+        var outcome = RunOutcome.From(SurveyRunKind.Manual, 1, State(SurveyStatus.Interrupted), DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Interrupted, outcome.Kind);
         Assert.Contains("interrump", outcome.Message);
@@ -157,7 +157,7 @@ public class RunOutcomeTests
     public void AManualRunThatFoundNothingStillNotifies()
     {
         // The person pressed "Relevar ahora" and is waiting for an answer, so silence is wrong.
-        var outcome = RunOutcome.From(SurveyRunKind.Manual, 3, null);
+        var outcome = RunOutcome.From(SurveyRunKind.Manual, 3, null, DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Nothing, outcome.Kind);
         Assert.True(outcome.ShouldNotify);
@@ -171,7 +171,7 @@ public class RunOutcomeTests
     {
         // TO-1: T3 (timed out), T6 (wall cap) and T9 (person closed the window) all share this sentence,
         // exactly as the texts table says "same as T3" for T6 and T9.
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: reason));
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: reason), DateTimeOffset.Now);
 
         Assert.Contains("La verificación de Mercado Libre quedó sin completar y el relevamiento se detuvo.", outcome.Message);
     }
@@ -180,7 +180,7 @@ public class RunOutcomeTests
     public void ABlockedRunWhoseWindowCouldNotBeShownHasItsOwnSentence()
     {
         // T5: nobody even had the chance, which is a different claim from "quedó sin completar".
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: "verification-no-window"));
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: "verification-no-window"), DateTimeOffset.Now);
 
         Assert.Contains(
             "Mercado Libre pidió una verificación y la ventana de Chrome no se pudo mostrar en esta pantalla, así que nadie pudo completarla.",
@@ -194,7 +194,7 @@ public class RunOutcomeTests
     {
         // Covers the old-script fallback (no blockedReason at all) and a future reason this build has
         // never heard of, with the same sentence: still true whatever wrote the state.
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: reason));
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: reason), DateTimeOffset.Now);
 
         Assert.Contains("Mercado Libre pidió una verificación y el relevamiento se detuvo.", outcome.Message);
     }
@@ -203,7 +203,7 @@ public class RunOutcomeTests
     public void AResumesAtOfNullLeavesTheResumeClauseOut()
     {
         // A surface that does not know the retry time must not invent one.
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: null);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), DateTimeOffset.Now, resumesAt: null);
 
         Assert.DoesNotContain("reanudan", outcome.Message);
     }
@@ -353,12 +353,16 @@ public class RunOutcomeTests
     }
 
     [Fact]
-    public void TheThreeArgumentOverloadStillCompilesAndKeepsResolvingToBlocked()
+    public void ACallWithNoResumesAtStillCompilesAndKeepsResolvingToBlocked()
     {
-        // Regression pin: every existing 3-argument call site (including the private ones inside
-        // AgentService's own failure paths) must keep compiling and keep landing on Blocked, with no
-        // resume clause, since none of them know a resumesAt.
-        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked));
+        // Regression pin, updated for fix pass 2, item 4 (low): now used to default to
+        // DateTimeOffset.Now, the same as resumesAt still does today, a latent trap for any future
+        // Blocked path using this short overload (a caller reading the clock itself would reintroduce
+        // the exact flakiness M-1 closed for BlockedMessage's own now parameter). now is required from
+        // here on; resumesAt stays the only optional argument, and every call site that still omits it,
+        // including the private ones inside AgentService's own failure paths, must keep compiling and
+        // keep landing on Blocked with no resume clause.
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked), DateTimeOffset.Now);
 
         Assert.Equal(RunOutcomeKind.Blocked, outcome.Kind);
         Assert.DoesNotContain("reanudan", outcome.Message);
@@ -402,7 +406,7 @@ public class RunOutcomeTests
                     continue;
                 }
 
-                AssertClean(RunOutcome.From(kind, code, null));
+                AssertClean(RunOutcome.From(kind, code, null, DateTimeOffset.Now));
             }
         }
 
