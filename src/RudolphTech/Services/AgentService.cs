@@ -301,6 +301,15 @@ public sealed class AgentService : IDisposable
         // wrote always carries a startedAt at or after it; a file left over from an earlier run is
         // always strictly before it. null (no file, or one the script never touched this time) is not
         // fresh either: there is nothing to prove this run wrote anything.
+        //
+        // Known limitation, left alone: if the system clock steps backwards while this run is in
+        // flight, a genuine wall this run just wrote can read as stale (stateStarted ends up before
+        // started even though the file is this run's own). Bounded and self-correcting, the next tick
+        // reads the clock the same way and moves on, and the pre-fix code had no equivalent protection
+        // to lose, so not worth chasing here. The signal that would remove it: ProcessRunner already
+        // knows the node process id it launched, and the script could write that same pid into the
+        // state file, so freshness could be decided by "is this the pid we launched" instead of by
+        // comparing clocks.
         var stateIsFromThisRun = state?.StartedAt is { } stateStarted && stateStarted >= started;
 
         _log.Write($"Fin del relevamiento (código {exitCode}): {outcome.Message}");
