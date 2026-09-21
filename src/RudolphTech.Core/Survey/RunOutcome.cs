@@ -48,7 +48,7 @@ public sealed class RunOutcome
 
     private RunOutcome(bool notifyOnNothing) => _notifyOnNothing = notifyOnNothing;
 
-    public static RunOutcome From(SurveyRunKind kind, int exitCode, SurveyState? state)
+    public static RunOutcome From(SurveyRunKind kind, int exitCode, SurveyState? state, DateTimeOffset? resumesAt = null)
     {
         var products = state?.Done ?? 0;
         var listings = state?.TotalListings ?? 0;
@@ -61,7 +61,7 @@ public sealed class RunOutcome
             {
                 Kind = RunOutcomeKind.Blocked,
                 Title = "Relevamiento detenido",
-                Message = "Mercado Libre pidió una verificación. Se reintenta en el próximo relevamiento.",
+                Message = BlockedMessage(state?.BlockedReason, resumesAt),
                 Products = products,
                 Listings = listings,
             },
@@ -102,7 +102,13 @@ public sealed class RunOutcome
         };
     }
 
-    private static RunOutcomeKind Resolve(int exitCode, SurveyState? state)
+    /// <summary>
+    /// Which kind of outcome this is: the state file first (it is written by the run itself and says
+    /// more), the exit code otherwise. Public so AgentService can ask the same question before
+    /// RunOutcome.From runs, which is what lets it compute the hold (and so resumesAt) before the
+    /// message exists instead of after; see AgentService's own ResumesAt helper.
+    /// </summary>
+    public static RunOutcomeKind Resolve(int exitCode, SurveyState? state)
     {
         switch (state?.Status)
         {
@@ -121,5 +127,30 @@ public sealed class RunOutcome
             3 => RunOutcomeKind.Nothing,
             _ => RunOutcomeKind.Error,
         };
+    }
+
+    /// <summary>
+    /// T3 (timed out), T6 (the per run wall cap) and T9 (a person closed the Chrome window) all mean
+    /// the same thing happened: nobody finished answering, so they share one sentence, exactly as the
+    /// texts table says "same as T3" for T6 and T9. T5 is its own sentence: the window itself could not
+    /// be shown, so nobody even had the chance. No reason, or one this build does not recognise (an
+    /// older script never sends one), falls back to a sentence that is still true whatever wrote the
+    /// state. resumesAt null, meaning nobody has a hold to name yet, drops the resume clause entirely:
+    /// a surface that does not know the retry time must not invent one.
+    /// </summary>
+    private static string BlockedMessage(string? reason, DateTimeOffset? resumesAt)
+    {
+        var body = reason switch
+        {
+            "verification-no-window" =>
+                "Mercado Libre pidió una verificación y la ventana de Chrome no se pudo mostrar en esta pantalla, así que nadie pudo completarla.",
+            "verification-timeout" or "verification-cap" or "verification-window-closed" =>
+                "La verificación de Mercado Libre quedó sin completar y el relevamiento se detuvo.",
+            _ =>
+                "Mercado Libre pidió una verificación y el relevamiento se detuvo.",
+        };
+        return resumesAt is { } until
+            ? $"{body} Los relevamientos automáticos se reanudan {StatusText.ResumeAt(until, DateTimeOffset.Now)}."
+            : body;
     }
 }

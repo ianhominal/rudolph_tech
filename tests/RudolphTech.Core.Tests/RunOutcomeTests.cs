@@ -9,13 +9,14 @@ namespace RudolphTech.Core.Tests;
 /// </summary>
 public class RunOutcomeTests
 {
-    private static SurveyState State(SurveyStatus status, int listings = 0, string? message = null) => new()
+    private static SurveyState State(SurveyStatus status, int listings = 0, string? message = null, string? blockedReason = null) => new()
     {
         Status = status,
         ProductIds = ["p1"],
         Done = 1,
         TotalListings = listings,
         Message = message,
+        BlockedReason = blockedReason,
         StartedAt = new DateTimeOffset(2026, 9, 13, 9, 45, 0, TimeSpan.Zero),
         FinishedAt = new DateTimeOffset(2026, 9, 13, 10, 2, 0, TimeSpan.Zero),
     };
@@ -95,6 +96,88 @@ public class RunOutcomeTests
 
         Assert.Equal(RunOutcomeKind.Nothing, outcome.Kind);
         Assert.True(outcome.ShouldNotify);
+    }
+
+    [Theory]
+    [InlineData("verification-timeout")]
+    [InlineData("verification-cap")]
+    [InlineData("verification-window-closed")]
+    public void ABlockedRunSharesOneSentenceForATimeoutACapOrTheWindowBeingClosed(string reason)
+    {
+        // TO-1: T3 (timed out), T6 (wall cap) and T9 (person closed the window) all share this sentence,
+        // exactly as the texts table says "same as T3" for T6 and T9.
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: reason));
+
+        Assert.Contains("La verificación de Mercado Libre quedó sin completar y el relevamiento se detuvo.", outcome.Message);
+    }
+
+    [Fact]
+    public void ABlockedRunWhoseWindowCouldNotBeShownHasItsOwnSentence()
+    {
+        // T5: nobody even had the chance, which is a different claim from "quedó sin completar".
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: "verification-no-window"));
+
+        Assert.Contains(
+            "Mercado Libre pidió una verificación y la ventana de Chrome no se pudo mostrar en esta pantalla, así que nadie pudo completarla.",
+            outcome.Message);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("algo-que-este-build-no-reconoce")]
+    public void ABlockedRunWithNoReasonOrAnUnrecognisedOneUsesTheGenericSentence(string? reason)
+    {
+        // Covers the old-script fallback (no blockedReason at all) and a future reason this build has
+        // never heard of, with the same sentence: still true whatever wrote the state.
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked, blockedReason: reason));
+
+        Assert.Contains("Mercado Libre pidió una verificación y el relevamiento se detuvo.", outcome.Message);
+    }
+
+    [Fact]
+    public void AResumesAtOfNullLeavesTheResumeClauseOut()
+    {
+        // A surface that does not know the retry time must not invent one.
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: null);
+
+        Assert.DoesNotContain("reanudan", outcome.Message);
+    }
+
+    [Fact]
+    public void AResumesAtTomorrowNamesTomorrowInTheMessage()
+    {
+        var tomorrow = DateTimeOffset.Now.AddDays(1);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: tomorrow);
+
+        Assert.Contains("reanudan mañana a las", outcome.Message);
+    }
+
+    [Fact]
+    public void AResumesAtLaterTodayNamesTheTimeAloneInTheMessage()
+    {
+        var soon = DateTimeOffset.Now.AddHours(2);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: soon);
+
+        Assert.Contains($"reanudan a las {soon:HH:mm}", outcome.Message);
+    }
+
+    [Fact]
+    public void TheThreeArgumentOverloadStillCompilesAndKeepsResolvingToBlocked()
+    {
+        // Regression pin: every existing 3-argument call site (including the private ones inside
+        // AgentService's own failure paths) must keep compiling and keep landing on Blocked, with no
+        // resume clause, since none of them know a resumesAt.
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked));
+
+        Assert.Equal(RunOutcomeKind.Blocked, outcome.Kind);
+        Assert.DoesNotContain("reanudan", outcome.Message);
+    }
+
+    [Fact]
+    public void ResolveIsPublicSoAgentServiceCanPreviewTheOutcomeKindBeforeTheHoldExists()
+    {
+        Assert.Equal(RunOutcomeKind.Blocked, RunOutcome.Resolve(2, State(SurveyStatus.Blocked)));
+        Assert.Equal(RunOutcomeKind.Nothing, RunOutcome.Resolve(3, null));
     }
 
     [Fact]
