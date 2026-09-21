@@ -369,15 +369,23 @@ public sealed class AgentService : IDisposable
     /// not the raw hold end. This is exactly NextRunAt's own question, asked with a hold that has not
     /// been persisted yet, which is why it goes through CurrentScheduleInputs' override instead.
     ///
-    /// NextRunAt's own answer still needs one guard (fix pass 2, item 1, blocking): it reads
-    /// Settings.LastDailyRun as it stands at preview time, still yesterday's date, because Remember has
-    /// not written today's run yet. For a daily run already overdue by the time the script exits (a
-    /// 06:45 daily time, script exits at 06:50) NextRunAt honestly reports 06:45, an instant already in
-    /// the past; the very first version of this method ("?? previewedHold.Until") only ever fell back on
-    /// a null, so a non-null but stale candidate like this one sailed straight through and named a past
-    /// instant as the resume time. Only a candidate strictly after now is trusted; anything else falls
-    /// back to the raw previewed hold instead (see AResumesAtPreviewFallsBackToTheHeldHoldWhenThe
-    /// DailyCandidateIsAlreadyPast and its non-regression sibling in RunOutcomeTests).
+    /// NextRunAt's own answer still needs two guards on top, both found in the second independent
+    /// review's fix pass 2:
+    /// - It reads Settings.LastDailyRun as it stands at preview time, still yesterday's date, because
+    ///   Remember has not written today's run yet. For a daily run already overdue by the time the
+    ///   script exits (a 06:45 daily time, script exits at 06:50) NextRunAt honestly reports 06:45, an
+    ///   instant already in the past (item 1, blocking); only a candidate strictly after now is trusted,
+    ///   anything else falls back to the raw previewed hold instead (see AResumesAtPreviewFallsBackTo
+    ///   TheHeldHoldWhenTheDailyCandidateIsAlreadyPast and its non-regression sibling in
+    ///   RunOutcomeTests).
+    /// - It can answer null outright when nothing automatic is scheduled at all: paused, unlinked, or
+    ///   both schedules switched off (item 3, low). Most reachable here via a manual "Relevar ahora" run
+    ///   pressed while paused, which bypasses ScheduleDecider.Decide and can still hit a wall. The very
+    ///   first version of this method ("?? previewedHold.Until") treated that null exactly like a stale
+    ///   candidate and fell back to the raw previewed hold, promising a resume nothing automatic would
+    ///   ever honour; null is the honest answer here too, same as RunOutcome.BlockedMessage already does
+    ///   with a null resumesAt (AResumesAtOfNullLeavesTheResumeClauseOut, and see
+    ///   AResumesAtPreviewNamesNoTimeAtAllWhenNothingAutomaticIsScheduled for this method's own case).
     /// </summary>
     private DateTimeOffset? ResumesAt(int exitCode, SurveyState? state, bool stateIsFromThisRun, DateTimeOffset now)
     {
@@ -385,7 +393,12 @@ public sealed class AgentService : IDisposable
         var current = new BlockBackoff.Hold(Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay);
         var previewedHold = BlockBackoff.Next(current, RunOutcomeKind.Blocked, stateIsFromThisRun: true, now, Settings.DailyTime);
         var next = ScheduleDecider.NextRunAt(CurrentScheduleInputs(now, previewedHold.Until));
-        return next is { } at && at > now ? at : previewedHold.Until;
+        return next switch
+        {
+            null => null,
+            { } at when at > now => at,
+            _ => previewedHold.Until,
+        };
     }
 
     private void Remember(SurveyRunKind kind, DateTimeOffset started, DateTimeOffset finished, RunOutcome outcome, bool stateIsFromThisRun)

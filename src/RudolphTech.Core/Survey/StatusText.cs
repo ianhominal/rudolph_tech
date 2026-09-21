@@ -61,12 +61,19 @@ public static class StatusText
     /// that outlasted the next daily time still claimed "se reanudan" at the hold's own end, while the
     /// daily survey ran, unheld, before it). Still gated on settings.BlockedUntil, which only answers
     /// whether a hold exists at all; resumesAt only replaces the number named once that gate already
-    /// says yes, and falls back to the raw hold if a caller has none to offer (every real caller does).
+    /// says yes.
+    ///
+    /// A null resumesAt (fix pass 2, item 3, low) means the caller's own NextRunAt found nothing
+    /// automatic scheduled at all (reproduced with both the daily survey and the pending check switched
+    /// off while a hold from before still lingers): the raw settings.BlockedUntil is then not proof
+    /// anything will actually resume, so this falls through to the plain cadence sentence below instead
+    /// of naming the raw hold's time, same reasoning as RunOutcome.BlockedMessage dropping its clause on
+    /// a null resumesAt.
     /// </summary>
     public static string Schedule(AppSettings settings, bool paused, DateTimeOffset now, DateTimeOffset? resumesAt)
     {
         if (paused) return "Todo en pausa. Ningún relevamiento automático va a arrancar.";
-        if (settings.BlockedUntil is { } until && until > now) return $"Los relevamientos automáticos se reanudan {ResumeAt(resumesAt ?? until, now)}.";
+        if (settings.BlockedUntil is { } until && until > now && resumesAt is { } at) return $"Los relevamientos automáticos se reanudan {ResumeAt(at, now)}.";
         return $"Atiende pedidos cada {settings.PendingIntervalMinutes} minutos y releva todo a las {settings.DailyTime.ToString(Time)}.";
     }
 
@@ -76,21 +83,23 @@ public static class StatusText
     /// has to win over it; paused wins over a hold, because pausing is a person's own deliberate choice
     /// and a stale hold underneath it is not news.
     ///
-    /// resumesAt: see Schedule's own doc comment, same contract and same reason (H-1). Its horizon
-    /// safety is also why the held branch below needs no separate MaximumHoldHorizon check of its own
-    /// (M-2, found in the same review): resumesAt comes from ScheduleDecider.NextRunAt, whose pending
-    /// leg already ignores a settings.BlockedUntil farther out than that horizon and falls back to the
-    /// ordinary cadence (pinned in ScheduleDeciderTests), so a corrupted far-future BlockedUntil can
-    /// still pass the gate below but can never make this branch name a bogus far date.
+    /// resumesAt: see Schedule's own doc comment, same contract and same reason (H-1, and fix pass 2's
+    /// null case, item 3, low). Its horizon safety is also why the held branch below needs no separate
+    /// MaximumHoldHorizon check of its own (M-2, found in the same review): resumesAt comes from
+    /// ScheduleDecider.NextRunAt, whose pending leg already ignores a settings.BlockedUntil farther out
+    /// than that horizon and falls back to the ordinary cadence (pinned in ScheduleDeciderTests), so a
+    /// corrupted far-future BlockedUntil can still pass the gate below but can never make this branch
+    /// name a bogus far date. A null resumesAt means no automatic run is scheduled at all, so the held
+    /// branch is skipped entirely rather than naming the raw hold's time.
     /// </summary>
     public static string TrayTooltip(AppSettings settings, bool paused, bool running, DateTimeOffset now, DateTimeOffset? resumesAt, bool waiting = false)
     {
         if (waiting) return "Rudolph Tech: hay que verificar en la ventana de Chrome";
         if (running) return "Rudolph Tech: relevando ahora";
         if (paused) return "Rudolph Tech: en pausa";
-        if (settings.BlockedUntil is { } until && until > now)
+        if (settings.BlockedUntil is { } until && until > now && resumesAt is { } at)
         {
-            var held = $"Rudolph Tech: sin relevar hasta {HoldClause(resumesAt ?? until, now)}";
+            var held = $"Rudolph Tech: sin relevar hasta {HoldClause(at, now)}";
             return held.Length <= 63 ? held : held[..63];
         }
         var text = $"Rudolph Tech: diario {settings.DailyTime.ToString(Time)}, pedidos {settings.PendingIntervalMinutes} min";

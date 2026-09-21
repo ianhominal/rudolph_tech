@@ -313,6 +313,46 @@ public class RunOutcomeTests
     }
 
     [Fact]
+    public void AResumesAtPreviewNamesNoTimeAtAllWhenNothingAutomaticIsScheduled()
+    {
+        // LOW (fix pass 2, item 3): reproduced with a manual "Relevar ahora" run pressed while paused,
+        // which bypasses ScheduleDecider.Decide entirely and can still hit a verification wall.
+        // ResumesAt used to fall back to previewedHold.Until whenever NextRunAt returned null for any
+        // reason, including Paused, so the balloon promised "se reanudan a las 16:00" while nothing
+        // automatic was ever going to run; the tooltip in the very same state correctly says "Rudolph
+        // Tech: en pausa". Mirrors AgentService.ResumesAt's exact formula, same pattern as
+        // AResumesAtPreviewFallsBackToTheHeldHoldWhenTheDailyCandidateIsAlreadyPast above.
+        var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
+        var previewedHoldUntil = new DateTimeOffset(2026, 9, 21, 16, 0, 0, TimeSpan.FromHours(-3));
+        var scheduleInputs = new ScheduleInputs
+        {
+            Now = now,
+            PendingIntervalMinutes = 15,
+            DailyTime = new TimeOnly(6, 45),
+            Paused = true,
+            Configured = true,
+            LastPendingRun = now,
+            LastDailyRun = DateOnly.FromDateTime(now.Date.AddDays(-1)),
+            BlockedUntil = previewedHoldUntil,
+        };
+
+        var next = ScheduleDecider.NextRunAt(scheduleInputs);
+        Assert.Null(next);
+
+        DateTimeOffset? resumesAt = next switch
+        {
+            null => null,
+            { } at when at > now => at,
+            _ => previewedHoldUntil,
+        };
+        Assert.Null(resumesAt);
+
+        var outcome = RunOutcome.From(SurveyRunKind.Manual, 2, State(SurveyStatus.Blocked), resumesAt: resumesAt, now: now);
+
+        Assert.DoesNotContain("reanudan", outcome.Message);
+    }
+
+    [Fact]
     public void TheThreeArgumentOverloadStillCompilesAndKeepsResolvingToBlocked()
     {
         // Regression pin: every existing 3-argument call site (including the private ones inside

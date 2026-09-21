@@ -143,6 +143,24 @@ public class StatusTextTests
     }
 
     [Fact]
+    public void TheScheduleBalloonNamesNoTimeWhenNothingAutomaticIsScheduled()
+    {
+        // LOW (fix pass 2, item 3): resumesAt null means the caller's own NextRunAt (AgentService.
+        // NextRunAt) found nothing automatic scheduled at all, reproduced here with both the daily
+        // survey and the pending check switched off while a hold from before still lingers. The raw
+        // settings.BlockedUntil alone is not proof anything will actually resume, so this must not fall
+        // back to naming its time, same reasoning as RunOutcome.BlockedMessage dropping its clause on a
+        // null resumesAt (AResumesAtOfNullLeavesTheResumeClauseOut).
+        var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
+        var settings = new AppSettings { PendingIntervalMinutes = 5, DailyTime = new TimeOnly(6, 45), BlockedUntil = now.AddHours(2) };
+
+        var text = StatusText.Schedule(settings, paused: false, now, resumesAt: null);
+
+        Assert.DoesNotContain("se reanudan", text);
+        Assert.DoesNotContain("16:00", text);
+    }
+
+    [Fact]
     public void TheTrayTooltipFitsInWindowsSixtyThreeCharacterLimit()
     {
         var settings = new AppSettings { PendingIntervalMinutes = 120, DailyTime = new TimeOnly(23, 59) };
@@ -223,6 +241,22 @@ public class StatusTextTests
 
         Assert.Equal($"Rudolph Tech: sin relevar hasta las {resumesAt:HH:mm}", text);
         Assert.DoesNotContain("/", text);
+    }
+
+    [Fact]
+    public void TheTooltipNamesNoTimeWhenNothingAutomaticIsScheduled()
+    {
+        // Same reasoning as the Schedule balloon's sibling test above, for the tooltip's own held
+        // branch (StatusText.cs:93, fix pass 2, item 3): both schedules switched off while a hold from
+        // before still lingers, so falls through to the plain cadence tooltip instead of naming a time
+        // nothing automatic will ever honour.
+        var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
+        var settings = new AppSettings { PendingIntervalMinutes = 5, DailyTime = new TimeOnly(6, 45), BlockedUntil = now.AddHours(2) };
+
+        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now, resumesAt: null);
+
+        Assert.Equal("Rudolph Tech: diario 06:45, pedidos 5 min", text);
+        Assert.DoesNotContain("sin relevar", text);
     }
 
     [Fact]
