@@ -50,6 +50,41 @@ public class RunOutcomeTests
     }
 
     [Fact]
+    public void APendingRunWithExitZeroAndNoStateMeansNothingWasPending()
+    {
+        // H-2 (blocking, second independent review): web/scripts/meli-survey.mjs's "--pending, nothing
+        // due" path is the one place the script exits 0 without ever writing the state file. Reading
+        // that triple (Pending, exit 0, state null) as Finished, via the plain exit-code fallback,
+        // used to claim "Se relevaron 0 publicaciones de 0 producto(s)." on every ordinary silent tick,
+        // not only after a wall.
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 0, null);
+
+        Assert.Equal(RunOutcomeKind.Nothing, outcome.Kind);
+        Assert.False(outcome.ShouldNotify);
+        Assert.DoesNotContain("0 producto", outcome.Message);
+    }
+
+    [Fact]
+    public void ARealRunsCountsSurviveAFollowingSilentPendingTick()
+    {
+        // Mirrors AgentService.Remember's own gate (outcome.ShouldNotify): a no-op automatic pending
+        // tick must not overwrite the settings window's last real run with "sin novedades" over real
+        // counts. AgentService itself has no test harness (RudolphTech.Core.Tests never references
+        // RudolphTech.csproj, the WPF project AgentService lives in), so this pins the exact contract
+        // Remember must follow using the same Core types it actually reads and writes
+        // (RunOutcome/RunSummary), simulating Remember's gate line for line.
+        var real = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Finished, listings: 18));
+        var lastRun = RunSummary.From(SurveyRunKind.Daily, DateTimeOffset.Now, DateTimeOffset.Now, real);
+
+        var silentTick = RunOutcome.From(SurveyRunKind.Pending, 0, null);
+        Assert.False(silentTick.ShouldNotify);
+        if (silentTick.ShouldNotify) lastRun = RunSummary.From(SurveyRunKind.Pending, DateTimeOffset.Now, DateTimeOffset.Now, silentTick);
+
+        Assert.Equal(18, lastRun.Listings);
+        Assert.Equal(RunOutcomeKind.Finished, lastRun.Outcome);
+    }
+
+    [Fact]
     public void AnErrorExitCodeIsAnError()
     {
         var outcome = RunOutcome.From(SurveyRunKind.Daily, 1, null);
@@ -146,8 +181,13 @@ public class RunOutcomeTests
     [Fact]
     public void AResumesAtTomorrowNamesTomorrowInTheMessage()
     {
-        var tomorrow = DateTimeOffset.Now.AddDays(1);
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: tomorrow);
+        // M-1: From used to read DateTimeOffset.Now itself for the today/tomorrow/later phrasing, so
+        // this test flaked between 22:00 and 23:59 local (the message would actually read "mañana")
+        // and AResumesAtLaterTodayNamesTheTimeAloneInTheMessage flaked in the one millisecond window at
+        // midnight. Both now pass now explicitly, pinned to a fixed instant.
+        var now = new DateTimeOffset(2026, 9, 21, 23, 0, 0, TimeSpan.FromHours(-3));
+        var tomorrow = now.AddHours(7);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: tomorrow, now: now);
 
         Assert.Contains("reanudan mañana a las", outcome.Message);
     }
@@ -155,8 +195,9 @@ public class RunOutcomeTests
     [Fact]
     public void AResumesAtLaterTodayNamesTheTimeAloneInTheMessage()
     {
-        var soon = DateTimeOffset.Now.AddHours(2);
-        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: soon);
+        var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
+        var soon = now.AddHours(2);
+        var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: soon, now: now);
 
         Assert.Contains($"reanudan a las {soon:HH:mm}", outcome.Message);
     }
@@ -190,12 +231,37 @@ public class RunOutcomeTests
         {
             foreach (var code in codes)
             {
-                var outcome = RunOutcome.From(kind, code, null);
-                Assert.False(string.IsNullOrWhiteSpace(outcome.Title));
-                Assert.False(string.IsNullOrWhiteSpace(outcome.Message));
-                Assert.DoesNotContain('—', outcome.Message);
-                Assert.DoesNotContain('–', outcome.Message);
+                if (code == 2)
+                {
+                    // L-5: the plain loop below always passes state: null, so on a Blocked exit code it
+                    // only ever reaches the one generic "no reason recognised" sentence and never the
+                    // three reason-specific sentences or the resume clause. Exercise every reason and a
+                    // resumesAt in each of today/tomorrow/later so all of those get checked for dashes
+                    // too, not only the one branch the plain loop happens to hit.
+                    string?[] reasons = [null, "verification-timeout", "verification-cap", "verification-window-closed", "verification-no-window", "algo-que-este-build-no-reconoce"];
+                    var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
+                    DateTimeOffset?[] resumeTimes = [null, now.AddHours(2), now.AddHours(10), now.AddDays(3)];
+
+                    foreach (var reason in reasons)
+                    {
+                        foreach (var resumesAt in resumeTimes)
+                        {
+                            AssertClean(RunOutcome.From(kind, code, State(SurveyStatus.Blocked, blockedReason: reason), resumesAt: resumesAt, now: now));
+                        }
+                    }
+                    continue;
+                }
+
+                AssertClean(RunOutcome.From(kind, code, null));
             }
+        }
+
+        static void AssertClean(RunOutcome outcome)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(outcome.Title));
+            Assert.False(string.IsNullOrWhiteSpace(outcome.Message));
+            Assert.DoesNotContain('—', outcome.Message);
+            Assert.DoesNotContain('–', outcome.Message);
         }
     }
 }
