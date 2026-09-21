@@ -46,7 +46,14 @@ public sealed class SettingsStore
         public string? LastDailyRun { get; set; }
         public RunSummary? LastRun { get; set; }
         public DateTimeOffset? BlockedUntil { get; set; }
-        public int BlockedStreak { get; set; }
+
+        /// <summary>
+        /// Nullable like <see cref="PendingIntervalMinutes"/> above, not <c>int</c>: an explicit
+        /// "blockedStreak": null in a hand edited file used to fail deserializing the whole object
+        /// (System.Text.Json throws on null into a non-nullable value type), and Load's catch discards
+        /// everything it read, including the ingest token, silently unlinking the PC.
+        /// </summary>
+        public int? BlockedStreak { get; set; }
         public string? BlockedStreakDay { get; set; }
     }
 
@@ -83,7 +90,7 @@ public sealed class SettingsStore
         settings.LastDailyRun = DateOnly.TryParse(persisted.LastDailyRun, out var day) ? day : null;
         settings.LastRun = persisted.LastRun;
         settings.BlockedUntil = persisted.BlockedUntil;
-        settings.BlockedStreak = persisted.BlockedStreak;
+        settings.BlockedStreak = persisted.BlockedStreak ?? 0;
         settings.BlockedStreakDay = DateOnly.TryParse(persisted.BlockedStreakDay, out var blockedStreakDay) ? blockedStreakDay : null;
         settings.IngestToken = string.IsNullOrEmpty(persisted.ProtectedIngestToken)
             ? null

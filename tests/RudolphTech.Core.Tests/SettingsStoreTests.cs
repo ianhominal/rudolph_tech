@@ -188,6 +188,24 @@ public class SettingsStoreTests : IDisposable
     }
 
     [Fact]
+    public void AnExplicitNullBlockedStreakDoesNotDiscardTheWholeFile()
+    {
+        // A hand edited settings.json with "blockedStreak": null must not throw the whole persisted
+        // object away: every other field, in particular the ingest token that links this PC to the
+        // web app, has to survive it.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test", "protectedIngestToken": "protegido:dGVzdA==", "blockedStreak": null }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://x.test", settings.AppUrl);
+        Assert.Equal("test", settings.IngestToken);
+        Assert.Equal(0, settings.BlockedStreak);
+    }
+
+    [Fact]
     public void AbsentBackoffKeysDefaultToNoHold()
     {
         // settings.json written before the backoff fields existed: a run must not appear blocked with no cause.
