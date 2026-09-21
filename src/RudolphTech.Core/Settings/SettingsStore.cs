@@ -45,6 +45,9 @@ public sealed class SettingsStore
         public DateTimeOffset? LastPendingRun { get; set; }
         public string? LastDailyRun { get; set; }
         public RunSummary? LastRun { get; set; }
+        public DateTimeOffset? BlockedUntil { get; set; }
+        public int BlockedStreak { get; set; }
+        public string? BlockedStreakDay { get; set; }
     }
 
     public AppSettings Load()
@@ -79,6 +82,9 @@ public sealed class SettingsStore
         settings.LastPendingRun = persisted.LastPendingRun;
         settings.LastDailyRun = DateOnly.TryParse(persisted.LastDailyRun, out var day) ? day : null;
         settings.LastRun = persisted.LastRun;
+        settings.BlockedUntil = persisted.BlockedUntil;
+        settings.BlockedStreak = persisted.BlockedStreak;
+        settings.BlockedStreakDay = DateOnly.TryParse(persisted.BlockedStreakDay, out var blockedStreakDay) ? blockedStreakDay : null;
         settings.IngestToken = string.IsNullOrEmpty(persisted.ProtectedIngestToken)
             ? null
             : _protector.Unprotect(persisted.ProtectedIngestToken);
@@ -105,6 +111,9 @@ public sealed class SettingsStore
             LastPendingRun = settings.LastPendingRun,
             LastDailyRun = settings.LastDailyRun?.ToString("yyyy-MM-dd"),
             LastRun = settings.LastRun,
+            BlockedUntil = settings.BlockedUntil,
+            BlockedStreak = settings.BlockedStreak,
+            BlockedStreakDay = settings.BlockedStreakDay?.ToString("yyyy-MM-dd"),
         };
 
         var folder = Path.GetDirectoryName(_path);

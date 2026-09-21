@@ -61,6 +61,15 @@ public sealed class AppSettings
 
     public Survey.RunSummary? LastRun { get; set; }
 
+    /// <summary> No automatic pending check starts before this. The daily survey is never held. Null means no hold. </summary>
+    public DateTimeOffset? BlockedUntil { get; set; }
+
+    /// <summary> How many verification walls happened on <see cref="BlockedStreakDay"/>. Decides how long the next hold is. </summary>
+    public int BlockedStreak { get; set; }
+
+    /// <summary> The day <see cref="BlockedStreak"/> counts for. A wall on a new day starts the count over. </summary>
+    public DateOnly? BlockedStreakDay { get; set; }
+
     /// <summary> Nothing can run before the first login handed us a url and a token. </summary>
     public bool IsConfigured => !string.IsNullOrWhiteSpace(AppUrl) && !string.IsNullOrWhiteSpace(IngestToken);
 
