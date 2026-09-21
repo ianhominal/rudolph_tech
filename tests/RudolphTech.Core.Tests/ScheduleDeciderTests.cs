@@ -22,7 +22,8 @@ public class ScheduleDeciderTests
         DateTimeOffset? lastPendingRun = null,
         DateOnly? lastDailyRun = null,
         bool dailyEnabled = true,
-        bool pendingEnabled = true) => new()
+        bool pendingEnabled = true,
+        DateTimeOffset? blockedUntil = null) => new()
         {
             Now = now ?? Monday9Am,
             PendingIntervalMinutes = intervalMinutes,
@@ -34,6 +35,7 @@ public class ScheduleDeciderTests
             LastDailyRun = lastDailyRun,
             DailyEnabled = dailyEnabled,
             PendingEnabled = pendingEnabled,
+            BlockedUntil = blockedUntil,
         };
 
     [Fact]
@@ -400,5 +402,113 @@ public class ScheduleDeciderTests
         var inputs = Inputs(intervalMinutes: 5, lastPendingRun: Monday9Am.AddMinutes(-5), lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date));
         Assert.NotEqual(ScheduledAction.None, ScheduleDecider.Decide(inputs));
         Assert.True(ScheduleDecider.NextRunAt(inputs) <= inputs.Now);
+    }
+
+    // --- BlockedUntil: the hold after a verification wall (BlockBackoff writes it, this only reads it) ---
+
+    [Fact]
+    public void AHoldInTheFutureRefusesThePendingCheckEvenWhenItWouldOtherwiseBeDue()
+    {
+        var inputs = Inputs(
+            lastPendingRun: Monday9Am.AddMinutes(-15),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.AddHours(2));
+
+        Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void AHoldNeverBlocksADueDailySurvey()
+    {
+        var inputs = Inputs(
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date.AddDays(-1)),
+            blockedUntil: Monday9Am.AddHours(2));
+
+        Assert.Equal(ScheduledAction.Daily, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void AnExpiredHoldLetsThePendingCheckThrough()
+    {
+        var inputs = Inputs(
+            lastPendingRun: Monday9Am.AddMinutes(-15),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.AddMinutes(-1));
+
+        Assert.Equal(ScheduledAction.Pending, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void NextRunAtReturnsTheHoldWhenItIsLaterThanTheNormalPendingTime()
+    {
+        var inputs = Inputs(
+            intervalMinutes: 5,
+            lastPendingRun: Monday9Am.AddMinutes(-2),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.AddHours(2));
+
+        Assert.Equal(Monday9Am.AddHours(2), ScheduleDecider.NextRunAt(inputs));
+    }
+
+    [Fact]
+    public void NextRunAtReturnsTheDailyTimeWhenTheHoldRunsPastIt()
+    {
+        // A third-or-later wall's hold points past tomorrow's daily survey; the daily still wins,
+        // because the daily is never held. Thirty hours, not an arbitrary larger value: far enough
+        // past tomorrow's 06:45 to prove the point, comfortably inside MaximumHoldHorizon so this test
+        // is about that rule, not tripped by it.
+        var inputs = Inputs(
+            lastPendingRun: Monday9Am,
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.AddHours(30));
+
+        Assert.Equal(new DateTimeOffset(2026, 9, 15, 6, 45, 0, TimeSpan.FromHours(-3)), ScheduleDecider.NextRunAt(inputs));
+    }
+
+    [Fact]
+    public void ABlockedUntilFartherOutThanTheMaximumHoldHorizonIsNotTrusted()
+    {
+        // A clock that went backwards, or a settings.json copied from a machine running ahead, must
+        // not freeze every automatic run forever with nothing in the log and no way out short of hand
+        // editing the file.
+        var inputs = Inputs(
+            lastPendingRun: Monday9Am.AddMinutes(-15),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.Add(ScheduleDecider.MaximumHoldHorizon).AddHours(1));
+
+        Assert.Equal(ScheduledAction.Pending, ScheduleDecider.Decide(inputs));
+    }
+
+    [Fact]
+    public void NextRunAtIgnoresABlockedUntilFartherOutThanTheMaximumHoldHorizon()
+    {
+        var inputs = Inputs(
+            intervalMinutes: 5,
+            lastPendingRun: Monday9Am.AddMinutes(-2),
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.Add(ScheduleDecider.MaximumHoldHorizon).AddHours(1));
+
+        Assert.Equal(Monday9Am.AddMinutes(3), ScheduleDecider.NextRunAt(inputs));
+    }
+
+    [Fact]
+    public void NextRunAtIsNothingWhilePausedEvenUnderAHold()
+    {
+        Assert.Null(ScheduleDecider.NextRunAt(Inputs(paused: true, blockedUntil: Monday9Am.AddHours(2))));
+    }
+
+    [Fact]
+    public void LastPendingRunStampedDuringAHoldDoesNotShortenIt()
+    {
+        // TO-3: Remember keeps stamping LastPendingRun after a Blocked run too, but the hold still wins
+        // over the interval that stamp would otherwise start counting down from.
+        var inputs = Inputs(
+            intervalMinutes: 5,
+            lastPendingRun: Monday9Am,
+            lastDailyRun: DateOnly.FromDateTime(Monday9Am.Date),
+            blockedUntil: Monday9Am.AddHours(2));
+
+        Assert.Equal(ScheduledAction.None, ScheduleDecider.Decide(inputs));
+        Assert.Equal(Monday9Am.AddHours(2), ScheduleDecider.NextRunAt(inputs));
     }
 }

@@ -169,4 +169,103 @@ public class SettingsStoreTests : IDisposable
         settings.AppUrl = "   ";
         Assert.False(settings.IsConfigured);
     }
+
+    [Fact]
+    public void TheBackoffFieldsRoundTripThroughSaveAndLoad()
+    {
+        var store = NewStore();
+        var settings = store.Load();
+        settings.BlockedUntil = new DateTimeOffset(2026, 9, 21, 16, 35, 1, TimeSpan.FromHours(-3));
+        settings.BlockedStreak = 1;
+        settings.BlockedStreakDay = new DateOnly(2026, 9, 21);
+        store.Save(settings);
+
+        var reloaded = NewStore().Load();
+
+        Assert.Equal(new DateTimeOffset(2026, 9, 21, 16, 35, 1, TimeSpan.FromHours(-3)), reloaded.BlockedUntil);
+        Assert.Equal(1, reloaded.BlockedStreak);
+        Assert.Equal(new DateOnly(2026, 9, 21), reloaded.BlockedStreakDay);
+    }
+
+    [Fact]
+    public void AnExplicitNullBlockedStreakDoesNotDiscardTheWholeFile()
+    {
+        // A hand edited settings.json with "blockedStreak": null must not throw the whole persisted
+        // object away: every other field, in particular the ingest token that links this PC to the
+        // web app, has to survive it.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test", "protectedIngestToken": "protegido:dGVzdA==", "blockedStreak": null }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://x.test", settings.AppUrl);
+        Assert.Equal("test", settings.IngestToken);
+        Assert.Equal(0, settings.BlockedStreak);
+    }
+
+    [Fact]
+    public void AnExplicitNullChromeOffScreenDoesNotDiscardTheWholeFile()
+    {
+        // Same exposure as blockedStreak above, for a field that used to be a plain, non-nullable
+        // bool: an explicit "chromeOffScreen": null in a hand edited file must not throw away the
+        // whole persisted object, in particular the ingest token that links this PC to the web app.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test", "protectedIngestToken": "protegido:dGVzdA==", "chromeOffScreen": null }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://x.test", settings.AppUrl);
+        Assert.Equal("test", settings.IngestToken);
+        Assert.False(settings.ChromeOffScreen);
+    }
+
+    [Fact]
+    public void AnExplicitNullStartWithWindowsDoesNotDiscardTheWholeFile()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test", "protectedIngestToken": "protegido:dGVzdA==", "startWithWindows": null }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://x.test", settings.AppUrl);
+        Assert.Equal("test", settings.IngestToken);
+        Assert.False(settings.StartWithWindows);
+    }
+
+    [Fact]
+    public void AnExplicitNullPausedDoesNotDiscardTheWholeFile()
+    {
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test", "protectedIngestToken": "protegido:dGVzdA==", "paused": null }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Equal("https://x.test", settings.AppUrl);
+        Assert.Equal("test", settings.IngestToken);
+        Assert.False(settings.Paused);
+    }
+
+    [Fact]
+    public void AbsentBackoffKeysDefaultToNoHold()
+    {
+        // settings.json written before the backoff fields existed: a run must not appear blocked with no cause.
+        Directory.CreateDirectory(_folder);
+        File.WriteAllText(
+            Path.Combine(_folder, "settings.json"),
+            """{ "appUrl": "https://x.test" }""");
+
+        var settings = NewStore().Load();
+
+        Assert.Null(settings.BlockedUntil);
+        Assert.Equal(0, settings.BlockedStreak);
+        Assert.Null(settings.BlockedStreakDay);
+    }
 }

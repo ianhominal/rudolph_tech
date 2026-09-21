@@ -31,6 +31,9 @@ public sealed class ScheduleInputs
 
     /// <summary> Off means the pending check never starts on its own, whatever the clock says. </summary>
     public bool PendingEnabled { get; init; } = true;
+
+    /// <summary> Set by <see cref="Scheduling.BlockBackoff"/> after a verification wall. Gates the pending check only: the daily survey is never held. </summary>
+    public DateTimeOffset? BlockedUntil { get; init; }
 }
 
 /// <summary>
@@ -49,13 +52,31 @@ public static class ScheduleDecider
     /// </summary>
     public static readonly TimeSpan FirstDailyGrace = TimeSpan.FromHours(3);
 
+    /// <summary>
+    /// The longest a hold is ever trusted. The worst real hold, a third wall late at night, points at
+    /// the next daily survey, at most a day away; a BlockedUntil farther out than this was never
+    /// written by BlockBackoff, it is a clock that went backwards or a settings.json copied from a
+    /// machine running ahead, and trusting it would freeze every automatic run with nothing in the log
+    /// and no way out short of editing the file by hand.
+    /// </summary>
+    public static readonly TimeSpan MaximumHoldHorizon = TimeSpan.FromHours(36);
+
     public static ScheduledAction Decide(ScheduleInputs inputs)
     {
         if (inputs.IsRunning || inputs.Paused || !inputs.Configured) return ScheduledAction.None;
         if (IsDailyDue(inputs)) return ScheduledAction.Daily;
+        if (IsHeld(inputs)) return ScheduledAction.None;
         if (IsPendingDue(inputs)) return ScheduledAction.Pending;
         return ScheduledAction.None;
     }
+
+    /// <summary>
+    /// Checked ahead of the pending check but below the daily one: a wall never holds the daily
+    /// survey. Ignores a BlockedUntil past <see cref="MaximumHoldHorizon"/>: see that constant's own
+    /// comment for why such a value is never trusted.
+    /// </summary>
+    private static bool IsHeld(ScheduleInputs inputs) =>
+        inputs.BlockedUntil is { } until && inputs.Now < until && until - inputs.Now <= MaximumHoldHorizon;
 
     private static bool IsDailyDue(ScheduleInputs inputs)
     {
@@ -109,10 +130,20 @@ public static class ScheduleDecider
         return daily < pending ? daily : pending;
     }
 
-    private static DateTimeOffset NextPendingAt(ScheduleInputs inputs) =>
-        inputs.LastPendingRun is { } last
+    private static DateTimeOffset NextPendingAt(ScheduleInputs inputs)
+    {
+        var normal = inputs.LastPendingRun is { } last
             ? last + TimeSpan.FromMinutes(EffectiveIntervalMinutes(inputs))
             : inputs.Now;
+
+        // A hold that runs past the normal interval wins; LastPendingRun keeps being stamped (TO-3),
+        // so the normal computation alone would let the interval quietly outrun the hold. A
+        // BlockedUntil past MaximumHoldHorizon is not trusted here either, for the same reason IsHeld
+        // ignores it.
+        return inputs.BlockedUntil is { } until && until > normal && until - inputs.Now <= MaximumHoldHorizon
+            ? until
+            : normal;
+    }
 
     private static DateTimeOffset NextDailyAt(ScheduleInputs inputs)
     {

@@ -69,8 +69,10 @@ public class RunOutcomeTests
     [Fact]
     public void ABlockedStateWinsOverASuccessfulExitCode()
     {
-        // The script can only exit 0 after writing "finished", but a stale exit code must never
-        // turn a blocked run into a green notification.
+        // Not every exit 0 was written by this run: meli-survey.mjs's "--pending, nothing due" path
+        // exits 0 without touching the state file, so a state left over from an earlier blocked run
+        // can outlive it. RunOutcome.From must still read that file as blocked here; keeping a hold
+        // from escalating on a read like this one is a separate concern, see BlockBackoff.Next (H1).
         var outcome = RunOutcome.From(SurveyRunKind.Daily, 0, State(SurveyStatus.Blocked));
 
         Assert.Equal(RunOutcomeKind.Blocked, outcome.Kind);

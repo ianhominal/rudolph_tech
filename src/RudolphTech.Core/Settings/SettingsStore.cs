@@ -34,9 +34,15 @@ public sealed class SettingsStore
         public string? AppUrl { get; set; }
         public int? PendingIntervalMinutes { get; set; }
         public string? DailyTime { get; set; }
-        public bool ChromeOffScreen { get; set; }
-        public bool StartWithWindows { get; set; }
-        public bool Paused { get; set; }
+        /// <summary>
+        /// Nullable like <see cref="PendingIntervalMinutes"/> above, not <c>bool</c>: an explicit
+        /// "chromeOffScreen"/"startWithWindows"/"paused": null in a hand edited file used to fail
+        /// deserializing the whole object the same way an explicit "blockedStreak": null did (see
+        /// below), discarding the ingest token with it.
+        /// </summary>
+        public bool? ChromeOffScreen { get; set; }
+        public bool? StartWithWindows { get; set; }
+        public bool? Paused { get; set; }
         public bool? DailyEnabled { get; set; }
         public bool? PendingEnabled { get; set; }
         public string? ProtectedIngestToken { get; set; }
@@ -44,7 +50,27 @@ public sealed class SettingsStore
         public DateTimeOffset? LastPackageDownload { get; set; }
         public DateTimeOffset? LastPendingRun { get; set; }
         public string? LastDailyRun { get; set; }
+
+        /// <summary>
+        /// Whole-object nullable, unlike its own fields: <see cref="RunSummary.StartedAt"/>,
+        /// <see cref="RunSummary.Kind"/> and <see cref="RunSummary.Outcome"/> are non-nullable value
+        /// types, so an explicit null inside a hand edited "lastRun" object still fails deserializing
+        /// this whole <see cref="Persisted"/> object, the same way ChromeOffScreen/StartWithWindows/
+        /// Paused and BlockedStreak used to above, discarding the ingest token with it. Left alone
+        /// here: RunSummary is nested and has more affected fields, its own fix belongs in its own
+        /// slice.
+        /// </summary>
         public RunSummary? LastRun { get; set; }
+        public DateTimeOffset? BlockedUntil { get; set; }
+
+        /// <summary>
+        /// Nullable like <see cref="PendingIntervalMinutes"/> above, not <c>int</c>: an explicit
+        /// "blockedStreak": null in a hand edited file used to fail deserializing the whole object
+        /// (System.Text.Json throws on null into a non-nullable value type), and Load's catch discards
+        /// everything it read, including the ingest token, silently unlinking the PC.
+        /// </summary>
+        public int? BlockedStreak { get; set; }
+        public string? BlockedStreakDay { get; set; }
     }
 
     public AppSettings Load()
@@ -69,9 +95,9 @@ public sealed class SettingsStore
         settings.AppUrl = string.IsNullOrWhiteSpace(persisted.AppUrl) ? AppSettings.DefaultAppUrl : persisted.AppUrl;
         settings.PendingIntervalMinutes = persisted.PendingIntervalMinutes ?? AppSettings.DefaultPendingIntervalMinutes;
         settings.DailyTime = TimeOnly.TryParse(persisted.DailyTime, out var daily) ? daily : AppSettings.DefaultDailyTime;
-        settings.ChromeOffScreen = persisted.ChromeOffScreen;
-        settings.StartWithWindows = persisted.StartWithWindows;
-        settings.Paused = persisted.Paused;
+        settings.ChromeOffScreen = persisted.ChromeOffScreen ?? false;
+        settings.StartWithWindows = persisted.StartWithWindows ?? false;
+        settings.Paused = persisted.Paused ?? false;
         settings.DailyEnabled = persisted.DailyEnabled ?? true;
         settings.PendingEnabled = persisted.PendingEnabled ?? true;
         settings.PackageAppUrl = persisted.PackageAppUrl;
@@ -79,6 +105,9 @@ public sealed class SettingsStore
         settings.LastPendingRun = persisted.LastPendingRun;
         settings.LastDailyRun = DateOnly.TryParse(persisted.LastDailyRun, out var day) ? day : null;
         settings.LastRun = persisted.LastRun;
+        settings.BlockedUntil = persisted.BlockedUntil;
+        settings.BlockedStreak = persisted.BlockedStreak ?? 0;
+        settings.BlockedStreakDay = DateOnly.TryParse(persisted.BlockedStreakDay, out var blockedStreakDay) ? blockedStreakDay : null;
         settings.IngestToken = string.IsNullOrEmpty(persisted.ProtectedIngestToken)
             ? null
             : _protector.Unprotect(persisted.ProtectedIngestToken);
@@ -105,6 +134,9 @@ public sealed class SettingsStore
             LastPendingRun = settings.LastPendingRun,
             LastDailyRun = settings.LastDailyRun?.ToString("yyyy-MM-dd"),
             LastRun = settings.LastRun,
+            BlockedUntil = settings.BlockedUntil,
+            BlockedStreak = settings.BlockedStreak,
+            BlockedStreakDay = settings.BlockedStreakDay?.ToString("yyyy-MM-dd"),
         };
 
         var folder = Path.GetDirectoryName(_path);
