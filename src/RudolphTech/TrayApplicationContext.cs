@@ -74,7 +74,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         {
             Icon = LoadIcon(),
             Visible = true,
-            Text = StatusText.TrayTooltip(_settings, _settings.Paused, running: false),
+            Text = StatusText.TrayTooltip(_settings, _settings.Paused, running: false, DateTimeOffset.Now),
             ContextMenuStrip = menu,
         };
         _tray.DoubleClick += (_, _) => OpenSettings();
@@ -195,7 +195,7 @@ public sealed class TrayApplicationContext : ApplicationContext
     {
         RunOnUiThread(() =>
         {
-            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, running);
+            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, running, DateTimeOffset.Now);
             _runItem.Enabled = !running;
             _runItem.Text = running ? "Relevando" : "Relevar ahora";
             // A run starting or ending changes both halves of what the web shows, so it says so now
@@ -259,7 +259,7 @@ public sealed class TrayApplicationContext : ApplicationContext
         _window.Closed += (_, _) =>
         {
             _window = null;
-            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning);
+            _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning, DateTimeOffset.Now);
             _pauseItem.Text = _settings.Paused ? "Reanudar" : "Pausar";
         };
         _window.Show();
@@ -289,13 +289,13 @@ public sealed class TrayApplicationContext : ApplicationContext
         _settings.Paused = !_settings.Paused;
         _agent.SaveSettings();
         _pauseItem.Text = _settings.Paused ? "Reanudar" : "Pausar";
-        _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning);
+        _tray.Text = StatusText.TrayTooltip(_settings, _settings.Paused, _agent.IsRunning, DateTimeOffset.Now);
         SendHeartbeat();
         _log.Write(_settings.Paused ? "Relevamientos en pausa." : "Relevamientos reanudados.");
         _tray.ShowBalloonTip(
             4000,
             "Rudolph Tech",
-            _settings.Paused ? "No va a arrancar ningún relevamiento automático." : StatusText.Schedule(_settings, paused: false),
+            _settings.Paused ? "No va a arrancar ningún relevamiento automático." : StatusText.Schedule(_settings, paused: false, DateTimeOffset.Now),
             ToolTipIcon.Info);
     }
 
