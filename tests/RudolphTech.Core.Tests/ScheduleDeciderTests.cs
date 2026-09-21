@@ -331,6 +331,24 @@ public class ScheduleDeciderTests
     }
 
     [Fact]
+    public void NextRunAtCanReportADailyTimeAlreadyPastWhenItHasNotBeenRecordedYet()
+    {
+        // Deliberate, same honesty as the overdue-pending sibling above (AnOverduePendingCheckReports
+        // ItsOwnDueTimeRatherThanNow): AgentService.ResumesAt previews this before Settings.LastDailyRun
+        // is updated for the run that just finished, so at 06:50, five minutes after a 06:45 daily time,
+        // this still reports 06:45, an instant before Now. A caller naming this straight to a person,
+        // rather than only using it to decide when to run next, must guard against it (fix pass 2, item
+        // 1, blocking).
+        var now = new DateTimeOffset(2026, 9, 14, 6, 50, 0, TimeSpan.FromHours(-3));
+        var inputs = Inputs(now: now, lastPendingRun: now, lastDailyRun: DateOnly.FromDateTime(now.Date.AddDays(-1)));
+
+        var next = ScheduleDecider.NextRunAt(inputs);
+
+        Assert.Equal(new DateTimeOffset(2026, 9, 14, 6, 45, 0, TimeSpan.FromHours(-3)), next);
+        Assert.True(next < now);
+    }
+
+    [Fact]
     public void NextRunAtIgnoresASurveyAlreadyInProgress()
     {
         // Deliberate, and the only reason it is safe: the web app suppresses the schedule on its own while

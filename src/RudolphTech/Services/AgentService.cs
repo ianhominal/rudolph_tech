@@ -368,13 +368,24 @@ public sealed class AgentService : IDisposable
     /// hold window, the real next automatic run is the sooner daily one, and the balloon has to say so,
     /// not the raw hold end. This is exactly NextRunAt's own question, asked with a hold that has not
     /// been persisted yet, which is why it goes through CurrentScheduleInputs' override instead.
+    ///
+    /// NextRunAt's own answer still needs one guard (fix pass 2, item 1, blocking): it reads
+    /// Settings.LastDailyRun as it stands at preview time, still yesterday's date, because Remember has
+    /// not written today's run yet. For a daily run already overdue by the time the script exits (a
+    /// 06:45 daily time, script exits at 06:50) NextRunAt honestly reports 06:45, an instant already in
+    /// the past; the very first version of this method ("?? previewedHold.Until") only ever fell back on
+    /// a null, so a non-null but stale candidate like this one sailed straight through and named a past
+    /// instant as the resume time. Only a candidate strictly after now is trusted; anything else falls
+    /// back to the raw previewed hold instead (see AResumesAtPreviewFallsBackToTheHeldHoldWhenThe
+    /// DailyCandidateIsAlreadyPast and its non-regression sibling in RunOutcomeTests).
     /// </summary>
     private DateTimeOffset? ResumesAt(int exitCode, SurveyState? state, bool stateIsFromThisRun, DateTimeOffset now)
     {
         if (!stateIsFromThisRun || RunOutcome.Resolve(exitCode, state) != RunOutcomeKind.Blocked) return null;
         var current = new BlockBackoff.Hold(Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay);
         var previewedHold = BlockBackoff.Next(current, RunOutcomeKind.Blocked, stateIsFromThisRun: true, now, Settings.DailyTime);
-        return ScheduleDecider.NextRunAt(CurrentScheduleInputs(now, previewedHold.Until)) ?? previewedHold.Until;
+        var next = ScheduleDecider.NextRunAt(CurrentScheduleInputs(now, previewedHold.Until));
+        return next is { } at && at > now ? at : previewedHold.Until;
     }
 
     private void Remember(SurveyRunKind kind, DateTimeOffset started, DateTimeOffset finished, RunOutcome outcome, bool stateIsFromThisRun)
