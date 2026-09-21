@@ -7,6 +7,10 @@ public enum SurveyStatus
 {
     Unknown,
     Running,
+
+    /// <summary> Mercado Libre asked for a verification and a person has to answer it on the office PC. </summary>
+    WaitingVerification,
+
     Finished,
     Blocked,
     Error,
@@ -39,6 +43,19 @@ public sealed class SurveyState
 
     /// <summary> Total listings read across every product of the run. </summary>
     public int TotalListings { get; init; }
+
+    /// <summary> Set only while Status is WaitingVerification: when the current wait started. </summary>
+    public DateTimeOffset? WaitingSince { get; init; }
+
+    /// <summary> Set only while Status is WaitingVerification: the wait's deadline, in the reader's own clock. </summary>
+    public DateTimeOffset? WaitingUntil { get; init; }
+
+    /// <summary>
+    /// Set only when Status is Blocked, and only by a script new enough to send it: why the run
+    /// stopped. Absent (an older script) or a value this build does not recognise falls back to a
+    /// sentence that stays true regardless of the reason; see RunOutcome's BlockedMessage.
+    /// </summary>
+    public string? BlockedReason { get; init; }
 }
 
 /// <summary>
@@ -76,6 +93,9 @@ public static class SurveyStateFile
                 Status = ParseStatus(ReadString(root, "status")),
                 StartedAt = ReadDate(root, "startedAt"),
                 FinishedAt = ReadDate(root, "finishedAt"),
+                WaitingSince = ReadDate(root, "waitingSince"),
+                WaitingUntil = ReadDate(root, "waitingUntil"),
+                BlockedReason = ReadString(root, "blockedReason"),
                 Pid = root.TryGetProperty("pid", out var pid) && pid.TryGetInt32(out var pidValue) ? pidValue : 0,
                 ProductIds = ReadStringArray(root, "productIds"),
                 Done = root.TryGetProperty("done", out var done) && done.TryGetInt32(out var doneValue) ? doneValue : 0,
@@ -94,6 +114,7 @@ public static class SurveyStateFile
     private static SurveyStatus ParseStatus(string? status) => status switch
     {
         "running" => SurveyStatus.Running,
+        "waiting-verification" => SurveyStatus.WaitingVerification,
         "finished" => SurveyStatus.Finished,
         "blocked" => SurveyStatus.Blocked,
         "error" => SurveyStatus.Error,
