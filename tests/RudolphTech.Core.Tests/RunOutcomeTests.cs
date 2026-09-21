@@ -1,3 +1,4 @@
+using RudolphTech.Core.Scheduling;
 using RudolphTech.Core.Survey;
 
 namespace RudolphTech.Core.Tests;
@@ -200,6 +201,86 @@ public class RunOutcomeTests
         var outcome = RunOutcome.From(SurveyRunKind.Pending, 2, State(SurveyStatus.Blocked), resumesAt: soon, now: now);
 
         Assert.Contains($"reanudan a las {soon:HH:mm}", outcome.Message);
+    }
+
+    [Fact]
+    public void AResumesAtPreviewFallsBackToTheHeldHoldWhenTheDailyCandidateIsAlreadyPast()
+    {
+        // HIGH, blocking (fix pass 2, item 1): AgentService.ResumesAt asks ScheduleDecider.NextRunAt
+        // what the effective next automatic run is once the previewed hold is in force, but that
+        // question is answered with Settings.LastDailyRun as it stands right now, still yesterday's
+        // date at preview time (Remember has not written today's run yet). For a DAILY run already past
+        // its own time when the script exits (06:45 walled, exits at 06:50) NextRunAt honestly reports
+        // the daily time already due, 06:45, now in the past; the first fix pass's own guess
+        // ("?? previewedHold.Until") never triggers here because 06:45 is not null, so it named 06:45
+        // to a person as the resume time, five minutes after it had already passed. AgentService.
+        // ResumesAt has no test harness of its own (see RunSurveyCoreAsync's own note), so this mirrors
+        // its exact formula, using only RudolphTech.Core types, the same way
+        // ARealRunsCountsSurviveAFollowingSilentPendingTick mirrors Remember's gate.
+        var now = new DateTimeOffset(2026, 9, 14, 6, 50, 0, TimeSpan.FromHours(-3));
+        var previewedHoldUntil = now.AddHours(2);
+        var scheduleInputs = new ScheduleInputs
+        {
+            Now = now,
+            PendingIntervalMinutes = 15,
+            DailyTime = new TimeOnly(6, 45),
+            Configured = true,
+            LastPendingRun = now,
+            LastDailyRun = DateOnly.FromDateTime(now.Date.AddDays(-1)),
+            BlockedUntil = previewedHoldUntil,
+        };
+
+        var next = ScheduleDecider.NextRunAt(scheduleInputs);
+        Assert.True(next < now);
+
+        DateTimeOffset? resumesAt = next switch
+        {
+            null => null,
+            { } at when at > now => at,
+            _ => previewedHoldUntil,
+        };
+        Assert.Equal(previewedHoldUntil, resumesAt);
+
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked), resumesAt: resumesAt, now: now);
+
+        Assert.Contains($"reanudan a las {previewedHoldUntil:HH:mm}", outcome.Message);
+        Assert.DoesNotContain("a las 06:45", outcome.Message);
+    }
+
+    [Fact]
+    public void AResumesAtPreviewHonoursAnEarlierDailyCandidateThatIsStillAheadOfNow()
+    {
+        // Non-regression pin for the scenario the first fix pass's own H-1 fix already covered
+        // correctly: a pending wall at 05:00 persists a hold to 07:00, but the daily survey at 06:45 is
+        // sooner and still ahead of now, so the guard above must trust NextRunAt's own candidate rather
+        // than always falling back to the raw hold.
+        var now = new DateTimeOffset(2026, 9, 21, 5, 0, 0, TimeSpan.FromHours(-3));
+        var previewedHoldUntil = new DateTimeOffset(2026, 9, 21, 7, 0, 0, TimeSpan.FromHours(-3));
+        var scheduleInputs = new ScheduleInputs
+        {
+            Now = now,
+            PendingIntervalMinutes = 15,
+            DailyTime = new TimeOnly(6, 45),
+            Configured = true,
+            LastPendingRun = now,
+            LastDailyRun = DateOnly.FromDateTime(now.Date.AddDays(-1)),
+            BlockedUntil = previewedHoldUntil,
+        };
+
+        var next = ScheduleDecider.NextRunAt(scheduleInputs);
+        Assert.True(next > now);
+
+        DateTimeOffset? resumesAt = next switch
+        {
+            null => null,
+            { } at when at > now => at,
+            _ => previewedHoldUntil,
+        };
+        Assert.Equal(new DateTimeOffset(2026, 9, 21, 6, 45, 0, TimeSpan.FromHours(-3)), resumesAt);
+
+        var outcome = RunOutcome.From(SurveyRunKind.Daily, 2, State(SurveyStatus.Blocked), resumesAt: resumesAt, now: now);
+
+        Assert.Contains("reanudan a las 06:45", outcome.Message);
     }
 
     [Fact]
