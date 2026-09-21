@@ -305,7 +305,8 @@ public sealed class AgentService : IDisposable
         catch (OperationCanceledException)
         {
             _log.Write("El relevamiento se detuvo por pedido del usuario.");
-            return (RunOutcome.From(kind, 1, new SurveyState { Status = SurveyStatus.Interrupted }), false, DateTimeOffset.Now);
+            var cancelledAt = DateTimeOffset.Now;
+            return (RunOutcome.From(kind, 1, new SurveyState { Status = SurveyStatus.Interrupted }, cancelledAt), false, cancelledAt);
         }
         catch (Exception exception)
         {
@@ -349,7 +350,7 @@ public sealed class AgentService : IDisposable
         // not touch BlockBackoff's own hold: Remember below still gates on the same stateIsFromThisRun,
         // so a stale read never re-escalates it either way.
         var effectiveState = stateIsFromThisRun ? state : null;
-        var outcome = RunOutcome.From(kind, exitCode, effectiveState, ResumesAt(exitCode, effectiveState, stateIsFromThisRun, now), now);
+        var outcome = RunOutcome.From(kind, exitCode, effectiveState, now, ResumesAt(exitCode, effectiveState, stateIsFromThisRun, now));
 
         _log.Write($"Fin del relevamiento (código {exitCode}): {outcome.Message}");
         return (outcome, stateIsFromThisRun, now);
@@ -484,7 +485,7 @@ public sealed class AgentService : IDisposable
     private RunOutcome Failure(string message)
     {
         _log.Write(message);
-        return RunOutcome.From(SurveyRunKind.Manual, 1, new SurveyState { Status = SurveyStatus.Error, Message = message });
+        return RunOutcome.From(SurveyRunKind.Manual, 1, new SurveyState { Status = SurveyStatus.Error, Message = message }, DateTimeOffset.Now);
     }
 
     public void Dispose()

@@ -48,12 +48,18 @@ public sealed class RunOutcome
 
     private RunOutcome(bool notifyOnNothing) => _notifyOnNothing = notifyOnNothing;
 
-    public static RunOutcome From(SurveyRunKind kind, int exitCode, SurveyState? state, DateTimeOffset? resumesAt = null, DateTimeOffset? now = null)
+    /// <summary>
+    /// now used to default to DateTimeOffset.Now, like resumesAt still does; made required in fix pass
+    /// 2, item 4 (low), since that silent default was a latent trap for any future Blocked path using
+    /// this short overload: a caller reading the clock itself here would reintroduce the exact
+    /// flakiness M-1 already closed for BlockedMessage's own now parameter. resumesAt stays optional,
+    /// its null meaning "no resume clause" is a real, common answer, not a placeholder for "unknown".
+    /// </summary>
+    public static RunOutcome From(SurveyRunKind kind, int exitCode, SurveyState? state, DateTimeOffset now, DateTimeOffset? resumesAt = null)
     {
         var products = state?.Done ?? 0;
         var listings = state?.TotalListings ?? 0;
         var manual = kind != SurveyRunKind.Pending;
-        var at = now ?? DateTimeOffset.Now;
 
         // The script exits 0 without ever writing the state file on exactly one path:
         // "--pending, nothing due" (web/scripts/meli-survey.mjs), meaning no pending request was
@@ -71,7 +77,7 @@ public sealed class RunOutcome
             {
                 Kind = RunOutcomeKind.Blocked,
                 Title = "Relevamiento detenido",
-                Message = BlockedMessage(state?.BlockedReason, resumesAt, at),
+                Message = BlockedMessage(state?.BlockedReason, resumesAt, now),
                 Products = products,
                 Listings = listings,
             },
