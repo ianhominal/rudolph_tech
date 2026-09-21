@@ -30,7 +30,7 @@ public static class BlockBackoff
 
         return outcomeKind switch
         {
-            RunOutcomeKind.Blocked => AfterWall(now, current.Streak, current.Day, dailyTime),
+            RunOutcomeKind.Blocked => AfterWall(now, current.Streak, current.Day, dailyTime, current.Until),
             // Only a run that actually finished proves the block is gone. Nothing (no work found)
             // proves nothing either way, and neither does Interrupted or Error, so they leave the
             // hold exactly as it was.
@@ -39,8 +39,13 @@ public static class BlockBackoff
         };
     }
 
-    /// <summary> The hold after a wall. Third or later that day: nothing automatic until the next daily survey. </summary>
-    public static Hold AfterWall(DateTimeOffset now, int streak, DateOnly? streakDay, TimeOnly dailyTime)
+    /// <summary>
+    /// The hold after a wall. Third or later that day: nothing automatic until the next daily survey.
+    /// <paramref name="currentUntil"/> is the hold already in force, if any: a day reset must not hand
+    /// back a shorter wait than a still unexpired hold already running, even though it does reset the
+    /// streak that decides how long a fresh escalation lasts.
+    /// </summary>
+    public static Hold AfterWall(DateTimeOffset now, int streak, DateOnly? streakDay, TimeOnly dailyTime, DateTimeOffset? currentUntil = null)
     {
         var today = DateOnly.FromDateTime(now.Date);
         var count = streakDay == today ? streak + 1 : 1;
@@ -50,6 +55,12 @@ public static class BlockBackoff
             2 => now + SecondHold,
             _ => ThirdOrLaterHold(now, dailyTime),
         };
+        // A hold already in force must never get replaced by a shorter one, streak reset or not: the
+        // day boundary that resets the streak is about how escalation counts, not a promise that
+        // whichever wall crosses it is entitled to a shorter wait than the hold still running. Within
+        // the same day this is already a no-op (escalation only grows, see ThirdOrLaterHold), so the
+        // guard only ever changes the day-reset case.
+        if (currentUntil is { } existing && existing > now && existing > until) until = existing;
         return new Hold(until, count, today);
     }
 

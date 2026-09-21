@@ -106,6 +106,42 @@ public class BlockBackoffTests
     }
 
     [Fact]
+    public void ADayResetNeverEndsBeforeAnUnexpiredHoldItReplaces()
+    {
+        // A second wall at 23:00 holds until 05:00 the next day with streak 2. A walled run at 00:30
+        // that next day resets the streak to 1, which is intended: a new day starts the count over.
+        // But the plain two hour first hold from 00:30 would be 02:30, two and a half hours before the
+        // 05:00 the PC is already holding until, which is the same non-monotonicity L1 fixed within a
+        // day, reached through the day-reset door instead.
+        var secondWall = new DateTimeOffset(2026, 9, 21, 23, 0, 0, TimeSpan.FromHours(-3));
+        var priorHold = BlockBackoff.AfterWall(secondWall, streak: 1, streakDay: new DateOnly(2026, 9, 21), DailyTime);
+        Assert.Equal(new DateTimeOffset(2026, 9, 22, 5, 0, 0, TimeSpan.FromHours(-3)), priorHold.Until);
+        Assert.Equal(2, priorHold.Streak);
+
+        var nextDayWall = new DateTimeOffset(2026, 9, 22, 0, 30, 0, TimeSpan.FromHours(-3));
+        var afterReset = BlockBackoff.AfterWall(nextDayWall, priorHold.Streak, priorHold.Day, DailyTime, priorHold.Until);
+
+        Assert.Equal(1, afterReset.Streak);
+        Assert.Equal(new DateOnly(2026, 9, 22), afterReset.Day);
+        Assert.Equal(priorHold.Until, afterReset.Until);
+    }
+
+    [Fact]
+    public void AnOrdinaryNextDayFirstWallIsNotHeldBackByAnAlreadyExpiredHold()
+    {
+        // The ordinary case: yesterday's hold already ran out before today's first wall, so there is
+        // nothing live to protect and the plain two hour first hold applies exactly as before.
+        var now = new DateTimeOffset(2026, 9, 22, 8, 0, 0, TimeSpan.FromHours(-3));
+        var yesterdaysExpiredUntil = new DateTimeOffset(2026, 9, 22, 6, 45, 0, TimeSpan.FromHours(-3));
+
+        var hold = BlockBackoff.AfterWall(now, streak: 3, streakDay: new DateOnly(2026, 9, 21), DailyTime, yesterdaysExpiredUntil);
+
+        Assert.Equal(now + TimeSpan.FromHours(2), hold.Until);
+        Assert.Equal(1, hold.Streak);
+        Assert.Equal(new DateOnly(2026, 9, 22), hold.Day);
+    }
+
+    [Fact]
     public void NextDailyAfterReturnsTodayWhenStillAheadOfIt()
     {
         var beforeSix = new DateTimeOffset(2026, 9, 21, 5, 0, 0, TimeSpan.FromHours(-3));
