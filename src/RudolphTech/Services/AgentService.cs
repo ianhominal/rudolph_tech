@@ -305,7 +305,7 @@ public sealed class AgentService : IDisposable
 
         // Real backoff: a wall holds automatic runs for hours instead of the next 5-15 minute tick
         // (BB-2..3). "Relevar ahora" needs no check against this at all, because it never consults
-        // ScheduleDecider in the first place (see TrayApplicationContext.StartManualRun) — a person
+        // ScheduleDecider in the first place (see TrayApplicationContext.StartManualRun): a person
         // pressing the button is a person who can answer the wall.
         if (outcome.Kind == RunOutcomeKind.Blocked)
         {
