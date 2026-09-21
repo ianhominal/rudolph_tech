@@ -53,11 +53,20 @@ public static class StatusText
     /// "cada N minutos" claim is false until it lifts (found in the independent review of A1: it kept
     /// saying that through an active hold), so it gets replaced with the same resume clause the blocked
     /// balloon uses (T3/T5) rather than inventing a new sentence for a case the texts table never named.
+    ///
+    /// resumesAt is the effective next automatic run (AgentService.NextRunAt, i.e.
+    /// ScheduleDecider.NextRunAt, computed by the caller so this stays a pure formatter): the raw
+    /// settings.BlockedUntil alone can name a time later than what will really happen, because BB-4
+    /// makes the daily survey immune to a hold (H-1, found in the second independent review: a hold
+    /// that outlasted the next daily time still claimed "se reanudan" at the hold's own end, while the
+    /// daily survey ran, unheld, before it). Still gated on settings.BlockedUntil, which only answers
+    /// whether a hold exists at all; resumesAt only replaces the number named once that gate already
+    /// says yes, and falls back to the raw hold if a caller has none to offer (every real caller does).
     /// </summary>
-    public static string Schedule(AppSettings settings, bool paused, DateTimeOffset now)
+    public static string Schedule(AppSettings settings, bool paused, DateTimeOffset now, DateTimeOffset? resumesAt)
     {
         if (paused) return "Todo en pausa. Ningún relevamiento automático va a arrancar.";
-        if (settings.BlockedUntil is { } until && until > now) return $"Los relevamientos automáticos se reanudan {ResumeAt(until, now)}.";
+        if (settings.BlockedUntil is { } until && until > now) return $"Los relevamientos automáticos se reanudan {ResumeAt(resumesAt ?? until, now)}.";
         return $"Atiende pedidos cada {settings.PendingIntervalMinutes} minutos y releva todo a las {settings.DailyTime.ToString(Time)}.";
     }
 
@@ -66,15 +75,22 @@ public static class StatusText
     /// purpose (checked in StatusTextTests). Order matters: waiting is a live sub-state of running and
     /// has to win over it; paused wins over a hold, because pausing is a person's own deliberate choice
     /// and a stale hold underneath it is not news.
+    ///
+    /// resumesAt: see Schedule's own doc comment, same contract and same reason (H-1). Its horizon
+    /// safety is also why the held branch below needs no separate MaximumHoldHorizon check of its own
+    /// (M-2, found in the same review): resumesAt comes from ScheduleDecider.NextRunAt, whose pending
+    /// leg already ignores a settings.BlockedUntil farther out than that horizon and falls back to the
+    /// ordinary cadence (pinned in ScheduleDeciderTests), so a corrupted far-future BlockedUntil can
+    /// still pass the gate below but can never make this branch name a bogus far date.
     /// </summary>
-    public static string TrayTooltip(AppSettings settings, bool paused, bool running, DateTimeOffset now, bool waiting = false)
+    public static string TrayTooltip(AppSettings settings, bool paused, bool running, DateTimeOffset now, DateTimeOffset? resumesAt, bool waiting = false)
     {
         if (waiting) return "Rudolph Tech: hay que verificar en la ventana de Chrome";
         if (running) return "Rudolph Tech: relevando ahora";
         if (paused) return "Rudolph Tech: en pausa";
         if (settings.BlockedUntil is { } until && until > now)
         {
-            var held = $"Rudolph Tech: sin relevar hasta {HoldClause(until, now)}";
+            var held = $"Rudolph Tech: sin relevar hasta {HoldClause(resumesAt ?? until, now)}";
             return held.Length <= 63 ? held : held[..63];
         }
         var text = $"Rudolph Tech: diario {settings.DailyTime.ToString(Time)}, pedidos {settings.PendingIntervalMinutes} min";

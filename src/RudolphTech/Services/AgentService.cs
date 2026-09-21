@@ -80,8 +80,15 @@ public sealed class AgentService : IDisposable
 
     public void ForgetSession() => _sessionCookie = null;
 
-    /// <summary> Everything the schedule depends on, read at this instant. Shared so the tray's own tick and the heartbeat never disagree about it. </summary>
-    public ScheduleInputs CurrentScheduleInputs(DateTimeOffset now) => new()
+    /// <summary>
+    /// Everything the schedule depends on, read at this instant. Shared so the tray's own tick and the
+    /// heartbeat never disagree about it.
+    ///
+    /// blockedUntilOverride exists only for ResumesAt's preview below: it asks what the next automatic
+    /// run would be if the hold about to be persisted were already in effect, before it actually is
+    /// (H-1). Every other caller omits it and gets the real, currently persisted hold.
+    /// </summary>
+    public ScheduleInputs CurrentScheduleInputs(DateTimeOffset now, DateTimeOffset? blockedUntilOverride = null) => new()
     {
         Now = now,
         PendingIntervalMinutes = Settings.PendingIntervalMinutes,
@@ -93,8 +100,18 @@ public sealed class AgentService : IDisposable
         LastDailyRun = Settings.LastDailyRun,
         DailyEnabled = Settings.DailyEnabled,
         PendingEnabled = Settings.PendingEnabled,
-        BlockedUntil = Settings.BlockedUntil,
+        BlockedUntil = blockedUntilOverride ?? Settings.BlockedUntil,
     };
+
+    /// <summary>
+    /// The one number every surface naming a resume time must show: the tray tooltip, the
+    /// Pausar/Reanudar balloon (both via TrayApplicationContext) and a fresh Blocked balloon's resume
+    /// clause (via ResumesAt below) all call this, and it is exactly what SendHeartbeatAsync already
+    /// sends the web, so none of the four can ever disagree about when something automatic happens
+    /// next (H-1: BB-4 makes the daily survey immune to a hold, so the raw Settings.BlockedUntil alone
+    /// can name a time later than what will really happen).
+    /// </summary>
+    public DateTimeOffset? NextRunAt(DateTimeOffset now) => ScheduleDecider.NextRunAt(CurrentScheduleInputs(now));
 
     /// <summary>
     /// Tells the web app this program is open and when its next survey is due, so the Competencia screen
@@ -114,7 +131,7 @@ public sealed class AgentService : IDisposable
         {
             var now = DateTimeOffset.Now;
             var heartbeat = Heartbeat.For(
-                ScheduleDecider.NextRunAt(CurrentScheduleInputs(now)),
+                NextRunAt(now),
                 now,
                 Settings.Paused,
                 IsRunning,
@@ -224,8 +241,8 @@ public sealed class AgentService : IDisposable
 
         try
         {
-            var (outcome, stateIsFromThisRun) = await RunSurveyCoreAsync(kind, started, linked.Token);
-            Remember(kind, started, outcome, stateIsFromThisRun);
+            var (outcome, stateIsFromThisRun, finished) = await RunSurveyCoreAsync(kind, started, linked.Token);
+            Remember(kind, started, finished, outcome, stateIsFromThisRun);
             RunFinished?.Invoke(outcome);
             return outcome;
         }
@@ -244,25 +261,27 @@ public sealed class AgentService : IDisposable
     /// earlier one: the script can exit 0 without ever touching it, on the "--pending, nothing due"
     /// path, so a leftover file must not be read as fresh evidence of anything (H1). Every early
     /// return here skips the script entirely, so none of them read a state file at all; false is the
-    /// honest answer for all of them, not just a placeholder.
+    /// honest answer for all of them, not just a placeholder. The third value is the instant Remember
+    /// should treat as "finished"; for these early returns nothing actually ran, so the moment of the
+    /// return itself is that instant.
     /// </summary>
-    private async Task<(RunOutcome Outcome, bool StateIsFromThisRun)> RunSurveyCoreAsync(SurveyRunKind kind, DateTimeOffset started, CancellationToken cancellation)
+    private async Task<(RunOutcome Outcome, bool StateIsFromThisRun, DateTimeOffset Finished)> RunSurveyCoreAsync(SurveyRunKind kind, DateTimeOffset started, CancellationToken cancellation)
     {
         if (!Settings.IsConfigured || Settings.IngestToken is not { } token)
         {
-            return (Failure("Falta configurar la aplicación. Abrí la configuración e iniciá sesión."), false);
+            return (Failure("Falta configurar la aplicación. Abrí la configuración e iniciá sesión."), false, DateTimeOffset.Now);
         }
 
         if (!AgentPackageInstaller.IsInstalled(AppPaths.AgentFolder))
         {
-            return (Failure("El agente no está descargado. Abrí la configuración y tocá Actualizar agente."), false);
+            return (Failure("El agente no está descargado. Abrí la configuración y tocá Actualizar agente."), false, DateTimeOffset.Now);
         }
 
         var dependencies = await EnsureDependenciesAsync(cancellation);
-        if (!dependencies.Success) return (Failure(dependencies.Message), false);
+        if (!dependencies.Success) return (Failure(dependencies.Message), false, DateTimeOffset.Now);
 
         var node = NodeRuntime.Locate();
-        if (!node.Found) return (Failure(node.Error), false);
+        if (!node.Found) return (Failure(node.Error), false, DateTimeOffset.Now);
 
         // Both at once: real environment variables (which meli-lib.mjs layers on top of any file, so
         // they always win) and a .env written for this run only, which is what the script would read
@@ -286,15 +305,22 @@ public sealed class AgentService : IDisposable
         catch (OperationCanceledException)
         {
             _log.Write("El relevamiento se detuvo por pedido del usuario.");
-            return (RunOutcome.From(kind, 1, new SurveyState { Status = SurveyStatus.Interrupted }), false);
+            return (RunOutcome.From(kind, 1, new SurveyState { Status = SurveyStatus.Interrupted }), false, DateTimeOffset.Now);
         }
         catch (Exception exception)
         {
             _log.Write($"El relevamiento no pudo arrancar: {exception.Message}");
-            return (Failure($"El relevamiento no pudo arrancar: {exception.Message}"), false);
+            return (Failure($"El relevamiento no pudo arrancar: {exception.Message}"), false, DateTimeOffset.Now);
         }
 
         var state = SurveyStateFile.Read(AppPaths.StateFile);
+
+        // One instant for everything downstream of the script exiting (L-2): ResumesAt's preview below
+        // and Remember's actual write must agree exactly, or a gap straddling a minute names the
+        // balloon a minute earlier than the schedule, and a gap straddling midnight resets the streak
+        // under the preview but not under the write. Returned as Finished so RunSurveyAsync can hand
+        // this same value to Remember instead of reading the clock a second time.
+        var now = DateTimeOffset.Now;
 
         // Moved ahead of building the outcome (it used to run after): a Blocked message has to name the
         // real resume time (TO-1), and that time comes from the same freshness check BlockBackoff.Next
@@ -323,10 +349,10 @@ public sealed class AgentService : IDisposable
         // not touch BlockBackoff's own hold: Remember below still gates on the same stateIsFromThisRun,
         // so a stale read never re-escalates it either way.
         var effectiveState = stateIsFromThisRun ? state : null;
-        var outcome = RunOutcome.From(kind, exitCode, effectiveState, ResumesAt(exitCode, effectiveState, stateIsFromThisRun));
+        var outcome = RunOutcome.From(kind, exitCode, effectiveState, ResumesAt(exitCode, effectiveState, stateIsFromThisRun, now));
 
         _log.Write($"Fin del relevamiento (código {exitCode}): {outcome.Message}");
-        return (outcome, stateIsFromThisRun);
+        return (outcome, stateIsFromThisRun, now);
     }
 
     /// <summary>
@@ -336,17 +362,23 @@ public sealed class AgentService : IDisposable
     /// read's hold untouched (same stateIsFromThisRun gate as Remember's own call), so there is no new
     /// resume time to preview for it, and every non-Blocked outcome has no resume clause to fill in the
     /// first place.
+    ///
+    /// Previews the hold, then asks what the effective next automatic run would be with that hold in
+    /// force (H-1): BB-4 makes the daily survey immune to a hold, so if the daily time falls inside the
+    /// hold window, the real next automatic run is the sooner daily one, and the balloon has to say so,
+    /// not the raw hold end. This is exactly NextRunAt's own question, asked with a hold that has not
+    /// been persisted yet, which is why it goes through CurrentScheduleInputs' override instead.
     /// </summary>
-    private DateTimeOffset? ResumesAt(int exitCode, SurveyState? state, bool stateIsFromThisRun)
+    private DateTimeOffset? ResumesAt(int exitCode, SurveyState? state, bool stateIsFromThisRun, DateTimeOffset now)
     {
         if (!stateIsFromThisRun || RunOutcome.Resolve(exitCode, state) != RunOutcomeKind.Blocked) return null;
         var current = new BlockBackoff.Hold(Settings.BlockedUntil, Settings.BlockedStreak, Settings.BlockedStreakDay);
-        return BlockBackoff.Next(current, RunOutcomeKind.Blocked, stateIsFromThisRun: true, DateTimeOffset.Now, Settings.DailyTime).Until;
+        var previewedHold = BlockBackoff.Next(current, RunOutcomeKind.Blocked, stateIsFromThisRun: true, now, Settings.DailyTime);
+        return ScheduleDecider.NextRunAt(CurrentScheduleInputs(now, previewedHold.Until)) ?? previewedHold.Until;
     }
 
-    private void Remember(SurveyRunKind kind, DateTimeOffset started, RunOutcome outcome, bool stateIsFromThisRun)
+    private void Remember(SurveyRunKind kind, DateTimeOffset started, DateTimeOffset finished, RunOutcome outcome, bool stateIsFromThisRun)
     {
-        var finished = DateTimeOffset.Now;
         Settings.LastRun = RunSummary.From(kind, started, finished, outcome);
         if (kind == SurveyRunKind.Pending) Settings.LastPendingRun = finished;
         if (kind == SurveyRunKind.Daily) Settings.LastDailyRun = DateOnly.FromDateTime(started.Date);

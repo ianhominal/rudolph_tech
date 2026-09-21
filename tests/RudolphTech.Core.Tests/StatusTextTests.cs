@@ -77,7 +77,7 @@ public class StatusTextTests
     {
         var settings = new AppSettings { PendingIntervalMinutes = 15, DailyTime = new TimeOnly(6, 45) };
 
-        var text = StatusText.Schedule(settings, paused: false, DateTimeOffset.Now);
+        var text = StatusText.Schedule(settings, paused: false, DateTimeOffset.Now, resumesAt: null);
 
         Assert.Contains("15", text);
         Assert.Contains("06:45", text);
@@ -88,7 +88,7 @@ public class StatusTextTests
     {
         var settings = new AppSettings();
 
-        Assert.Contains("pausa", StatusText.Schedule(settings, paused: true, DateTimeOffset.Now), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pausa", StatusText.Schedule(settings, paused: true, DateTimeOffset.Now, resumesAt: null), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -99,13 +99,10 @@ public class StatusTextTests
         // every automatic pending check off for hours. A claim the app cannot back, same standing rule
         // as the tooltip.
         var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
-        var settings = new AppSettings
-        {
-            PendingIntervalMinutes = 5,
-            BlockedUntil = new DateTimeOffset(2026, 9, 21, 16, 40, 0, TimeSpan.FromHours(-3)),
-        };
+        var until = new DateTimeOffset(2026, 9, 21, 16, 40, 0, TimeSpan.FromHours(-3));
+        var settings = new AppSettings { PendingIntervalMinutes = 5, BlockedUntil = until };
 
-        var text = StatusText.Schedule(settings, paused: false, now);
+        var text = StatusText.Schedule(settings, paused: false, now, resumesAt: until);
 
         Assert.DoesNotContain("cada", text);
         Assert.Contains("se reanudan a las 16:40", text);
@@ -122,9 +119,27 @@ public class StatusTextTests
             BlockedUntil = new DateTimeOffset(2026, 9, 21, 16, 40, 0, TimeSpan.FromHours(-3)),
         };
 
-        var text = StatusText.Schedule(settings, paused: false, now);
+        var text = StatusText.Schedule(settings, paused: false, now, resumesAt: settings.BlockedUntil);
 
         Assert.Contains("cada", text);
+    }
+
+    [Fact]
+    public void TheScheduleBalloonNamesTheDailyRunWhenItFallsInsideTheHoldWindow()
+    {
+        // H-1: BB-4 makes the daily survey immune to a hold, so when the raw hold outlasts the next
+        // daily run, the real next automatic event is the (sooner) daily one. The caller is the one
+        // that knows this (via AgentService.NextRunAt, which reads ScheduleDecider.NextRunAt); this
+        // pins that Schedule names whatever resumesAt says, not the raw settings.BlockedUntil, once a
+        // hold is in effect.
+        var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
+        var settings = new AppSettings { PendingIntervalMinutes = 5, BlockedUntil = now.AddHours(3) };
+        var resumesAt = now.AddHours(1);
+
+        var text = StatusText.Schedule(settings, paused: false, now, resumesAt);
+
+        Assert.Contains($"se reanudan a las {resumesAt:HH:mm}", text);
+        Assert.DoesNotContain("17:00", text);
     }
 
     [Fact]
@@ -133,8 +148,8 @@ public class StatusTextTests
         var settings = new AppSettings { PendingIntervalMinutes = 120, DailyTime = new TimeOnly(23, 59) };
         var now = DateTimeOffset.Now;
 
-        Assert.InRange(StatusText.TrayTooltip(settings, paused: false, running: true, now).Length, 1, 63);
-        Assert.InRange(StatusText.TrayTooltip(settings, paused: true, running: false, now).Length, 1, 63);
+        Assert.InRange(StatusText.TrayTooltip(settings, paused: false, running: true, now, resumesAt: null).Length, 1, 63);
+        Assert.InRange(StatusText.TrayTooltip(settings, paused: true, running: false, now, resumesAt: null).Length, 1, 63);
     }
 
     [Fact]
@@ -145,7 +160,7 @@ public class StatusTextTests
         var settings = new AppSettings();
         var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
 
-        var text = StatusText.TrayTooltip(settings, paused: false, running: true, now, waiting: true);
+        var text = StatusText.TrayTooltip(settings, paused: false, running: true, now, resumesAt: null, waiting: true);
 
         Assert.Equal("Rudolph Tech: hay que verificar en la ventana de Chrome", text);
     }
@@ -156,7 +171,7 @@ public class StatusTextTests
         var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
         var settings = new AppSettings { BlockedUntil = new DateTimeOffset(2026, 9, 21, 16, 40, 0, TimeSpan.FromHours(-3)) };
 
-        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now);
+        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now, resumesAt: settings.BlockedUntil);
 
         Assert.Equal("Rudolph Tech: sin relevar hasta las 16:40", text);
     }
@@ -167,9 +182,47 @@ public class StatusTextTests
         var now = new DateTimeOffset(2026, 9, 21, 23, 0, 0, TimeSpan.FromHours(-3));
         var settings = new AppSettings { BlockedUntil = new DateTimeOffset(2026, 9, 22, 6, 45, 0, TimeSpan.FromHours(-3)) };
 
-        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now);
+        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now, resumesAt: settings.BlockedUntil);
 
         Assert.Equal("Rudolph Tech: sin relevar hasta mañana 06:45", text);
+    }
+
+    [Fact]
+    public void TheTooltipNamesTheDailyRunWhenItFallsInsideTheHoldWindow()
+    {
+        // H-1 (blocking, second independent review): reproduced with DailyEnabled true, DailyTime
+        // 06:45 and a wall that persisted a 07:00 hold, this branch used to say "sin relevar hasta las
+        // 07:00" while the daily survey (immune to any hold, BB-4) really ran at 06:45, opening Chrome
+        // on the office PC after the tray had just told the person it would not. resumesAt is the one
+        // number every surface must agree on (see StatusText.TrayTooltip's own doc comment).
+        var now = new DateTimeOffset(2026, 9, 21, 5, 0, 0, TimeSpan.FromHours(-3));
+        var settings = new AppSettings { BlockedUntil = new DateTimeOffset(2026, 9, 21, 7, 0, 0, TimeSpan.FromHours(-3)) };
+        var resumesAt = new DateTimeOffset(2026, 9, 21, 6, 45, 0, TimeSpan.FromHours(-3));
+
+        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now, resumesAt);
+
+        Assert.Equal("Rudolph Tech: sin relevar hasta las 06:45", text);
+        Assert.DoesNotContain("07:00", text);
+    }
+
+    [Fact]
+    public void TheTooltipNeverNamesARawHoldBeyondWhatResumesAtSays()
+    {
+        // M-2: a settings.BlockedUntil far beyond ScheduleDecider.MaximumHoldHorizon (a stepped-back
+        // clock, a settings.json copied from another machine) used to make this branch claim a bogus
+        // far date while Decide() ignored that same value entirely and kept running every few minutes.
+        // Moot once the caller always supplies resumesAt from NextRunAt, whose own pending leg already
+        // discards a BlockedUntil past the horizon (pinned separately in
+        // ScheduleDeciderTests.NextRunAtIgnoresABlockedUntilFartherOutThanTheMaximumHoldHorizon); this
+        // pins that the tooltip itself only ever trusts what it is given, never the raw settings value.
+        var now = new DateTimeOffset(2026, 9, 21, 5, 0, 0, TimeSpan.FromHours(-3));
+        var settings = new AppSettings { BlockedUntil = now.AddDays(5) };
+        var resumesAt = now.AddMinutes(5);
+
+        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now, resumesAt);
+
+        Assert.Equal($"Rudolph Tech: sin relevar hasta las {resumesAt:HH:mm}", text);
+        Assert.DoesNotContain("/", text);
     }
 
     [Fact]
@@ -178,7 +231,7 @@ public class StatusTextTests
         var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
         var settings = new AppSettings { BlockedUntil = now.AddHours(2) };
 
-        var text = StatusText.TrayTooltip(settings, paused: true, running: false, now);
+        var text = StatusText.TrayTooltip(settings, paused: true, running: false, now, resumesAt: settings.BlockedUntil);
 
         Assert.Equal("Rudolph Tech: en pausa", text);
     }
@@ -189,7 +242,7 @@ public class StatusTextTests
         var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
         var settings = new AppSettings { BlockedUntil = now.AddHours(2) };
 
-        var text = StatusText.TrayTooltip(settings, paused: false, running: true, now);
+        var text = StatusText.TrayTooltip(settings, paused: false, running: true, now, resumesAt: settings.BlockedUntil);
 
         Assert.Equal("Rudolph Tech: relevando ahora", text);
     }
@@ -205,7 +258,7 @@ public class StatusTextTests
             BlockedUntil = new DateTimeOffset(2026, 9, 21, 16, 40, 0, TimeSpan.FromHours(-3)),
         };
 
-        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now);
+        var text = StatusText.TrayTooltip(settings, paused: false, running: false, now, resumesAt: settings.BlockedUntil);
 
         Assert.Contains("diario", text);
     }
@@ -218,9 +271,9 @@ public class StatusTextTests
         var now = new DateTimeOffset(2026, 9, 21, 14, 0, 0, TimeSpan.FromHours(-3));
         var settings = new AppSettings { PendingIntervalMinutes = 120, DailyTime = new TimeOnly(23, 59), BlockedUntil = now.AddDays(3) };
 
-        Assert.InRange(StatusText.TrayTooltip(settings, paused: false, running: true, now, waiting).Length, 1, 63);
-        Assert.InRange(StatusText.TrayTooltip(settings, paused: true, running: false, now, waiting).Length, 1, 63);
-        Assert.InRange(StatusText.TrayTooltip(settings, paused: false, running: false, now, waiting).Length, 1, 63);
+        Assert.InRange(StatusText.TrayTooltip(settings, paused: false, running: true, now, settings.BlockedUntil, waiting).Length, 1, 63);
+        Assert.InRange(StatusText.TrayTooltip(settings, paused: true, running: false, now, settings.BlockedUntil, waiting).Length, 1, 63);
+        Assert.InRange(StatusText.TrayTooltip(settings, paused: false, running: false, now, settings.BlockedUntil, waiting).Length, 1, 63);
     }
 
     [Fact]
